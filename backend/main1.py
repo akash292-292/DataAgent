@@ -1517,12 +1517,31 @@ async def api_run_validation(
         print(f"[Drive Upload Error] {e}")
         web_link = None
         file_id = None
-    
-    # 8. Clean up disk files
-    import shutil
-    shutil.rmtree(temp_dir)
+    # Upload done
+    del media
     gc.collect()
-    print("file deleted successfully from the disk");
+    
+    # Remove artificial sleep
+    # time.sleep(100)  ❌ DELETE THIS
+    
+    # Safe cleanup
+    import shutil
+    import time
+    
+    def safe_rmtree(path, retries=5, delay=1):
+        for _ in range(retries):
+            try:
+                shutil.rmtree(path)
+                return
+            except PermissionError:
+                time.sleep(delay)
+        raise
+    
+    safe_rmtree(temp_dir)
+    gc.collect()
+    
+    print("file deleted successfully from the disk")
+    
     
     return {
         "workbook": {
