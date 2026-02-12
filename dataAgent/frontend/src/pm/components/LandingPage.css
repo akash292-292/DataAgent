@@ -1,0 +1,99 @@
+/* Reset default margins - make it more specific */
+.pm-scope body, .pm-scope html {
+  margin: 0 !important;
+  padding: 0 !important;
+  font-family: 'Segoe UI', sans-serif !important;
+  background: #eaf2fd !important;
+  min-height: 100vh !important;
+}
+
+/* Landing page specific styles */
+.pm-scope .landing-page {
+  background: #eaf2fd !important;
+  min-height: 100vh;
+  width: 100%;
+}
+
+/* Override any global container or card styles */
+.pm-scope .landing-page .container,
+.pm-scope .landing-page .card,
+.pm-scope .landing-page .welcome-section {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+/* Top bar with logo */
+.pm-scope .top-bar {
+  display: flex;
+  align-items: center;
+  padding: 20px 40px;
+  background: #eaf2fd !important;
+  box-shadow: none;
+}
+
+.pm-scope .forsys-logo {
+  height: 60px;
+  width: auto;
+}
+
+/* Main content center-aligned */
+.pm-scope .main-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 8vh;
+  padding: 20px;
+  text-align: center;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.pm-scope .main-heading {
+  font-size: 2.5rem;
+  color: #0d4dfb;
+  font-weight: 700;
+  margin-bottom: 20px;
+}
+
+.pm-scope .sub-text {
+  font-size: 1.1rem;
+  color: #444;
+  max-width: 600px;
+  margin-bottom: 40px;
+}
+
+/* Google login button */
+.pm-scope .google-login-btn {
+  background-color: white;
+  color: #333;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 12px 24px;
+  font-size: 1rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+
+.pm-scope .google-login-btn:hover {
+  background-color: #f0f0f0;
+}
+
+/* Google icon inside button */
+.pm-scope .google-icon-img {
+  height: 20px;
+  width: 20px;
+}
+
+.pm-scope .error-message {
+  margin-top: 20px;
+  color: red;
+  font-weight: 500;
+}

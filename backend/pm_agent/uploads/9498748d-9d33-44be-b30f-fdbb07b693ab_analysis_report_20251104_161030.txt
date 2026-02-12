@@ -1,0 +1,35 @@
+Comprehensive Analysis Report - 2025-11-04 16:10:30.424271
+File: C:\Users\ekaduttakshay.dondap\Downloads\Data
+==================================================
+
+DATASET DIMENSIONS:
+- Rows: 25
+- Columns: 7
+- Total Cells: 175
+
+DATA TYPES:
+- object: 6 columns
+- float64: 1 columns
+
+NULL VALUE ANALYSIS:
+------------------------------
+Total null values: 9
+Null percentage: 5.14%
+
+NULL VALUES BY COLUMN:
+--------------------------------------------------------------------------------
+Column               Data Type    Null Count   Null %     Non-Null    
+--------------------------------------------------------------------------------
+Actual gross         object       2            8.00       23          
+Adjusted gross (in 2022 dollars) object       2            8.00       23          
+Artist               object       0            0.00       25          
+Tour title           object       0            0.00       25          
+Year(s)              object       0            0.00       25          
+Shows                float64      5            20.00      20          
+Average gross        object       0            0.00       25          
+
+DUPLICATE ANALYSIS:
+------------------------------
+Total duplicate rows: 5
+Percentage of duplicate rows: 20.00%
+Duplicate row indices: [20, 21, 22, 23, 24]

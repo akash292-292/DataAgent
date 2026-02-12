@@ -7,7 +7,6 @@ const MappingOptions = () => {
   const location = useLocation();
   const navigate = useNavigate();
    const [email, setEmail] = useState(null);
-    const [token, setToken] = useState(null);
    const [isLoading, setIsLoading] = useState(true);
   const [activeOption, setActiveOption] = useState('drive'); 
   // FIX 1: Correctly destructure useState for loading
@@ -26,20 +25,19 @@ const MappingOptions = () => {
   //       return res.json();
   //     })
   //     .then(data => {
-  //       console.log('✅ Authenticated:', data.email);
+  //       console.log('âœ… Authenticated:', data.email);
   //       setEmail(data.email);
   //       setToken(data.access_token);
         
   //       // Store access token and email in localStorage for convenience
   //       if (data.access_token) {
-  //         localStorage.setItem('google_access_token', data.access_token);
   //       }
   //       localStorage.setItem('user_email', data.email);
         
   //       setIsLoading(false);
   //     })
   //     .catch(error => {
-  //       console.error('❌ Auth error:', error);
+  //       console.error('âŒ Auth error:', error);
   //       // Redirect to landing page if not authenticated
   //       window.location.href = `${process.env.REACT_APP_FRONTEND_URL}`;
   //     });
@@ -49,33 +47,28 @@ const MappingOptions = () => {
     // 1. Get params from URL (Passed from Dashboard)
     const queryParams = new URLSearchParams(window.location.search);
     const urlEmail = queryParams.get("email");
-    const urlToken = queryParams.get("token");
 
     // 2. Get params from LocalStorage (Refresh / Back Button)
     const storedEmail = localStorage.getItem("user_email");
-    const storedToken = localStorage.getItem("google_access_token");
 
     if (urlEmail && urlEmail !== "undefined") {
-      console.log("📥 Receiving Session in Mapping Options...");
+      console.log("ðŸ“¥ Receiving Session in Mapping Options...");
       
       // Save valid data to storage
       localStorage.setItem("user_email", urlEmail);
-      if (urlToken) localStorage.setItem("google_access_token", urlToken);
 
       // Update State
       setEmail(urlEmail);
-      setToken(urlToken);
 
-      // 🧹 Clean the URL
+      // ðŸ§¹ Clean the URL
       window.history.replaceState({}, document.title, window.location.pathname);
     } 
     else if (storedEmail && storedEmail !== "undefined") {
-      console.log("♻️ Restoring Session from Storage...");
+      console.log("â™»ï¸ Restoring Session from Storage...");
       setEmail(storedEmail);
-      setToken(storedToken);
     } 
     else {
-      console.warn("⛔ No session found. Redirecting...");
+      console.warn("â›” No session found. Redirecting...");
       // Optional: Redirect to landing page
       // window.location.href = process.env.REACT_APP_BASE_FRONTEND_URL;
     }
@@ -89,7 +82,7 @@ const MappingOptions = () => {
         return;
     }
     setActiveOption('drive'); 
-    navigate(`/DriveSelection?email=${encodeURIComponent(email)}`); 
+    navigate(`/DriveSelection`);
 }, [email, navigate]);
   
   const showLocal = () => {
@@ -98,13 +91,12 @@ const MappingOptions = () => {
         return;
     }
     setActiveOption('local');
-    navigate(`/FileSelection?email=${encodeURIComponent(email)}`); // Pass email for persistence
+    navigate(`/FileSelection`);
   };
 
   const handleLogout = async () => {
     // 1. Clear Local Storage (Crucial)
     localStorage.removeItem("user_email");
-    localStorage.removeItem("google_access_token");
     
     // 3. Redirect to Landing Page
     window.location.href = `${process.env.REACT_APP_BASE_FRONTEND_URL}?action=logout`;
@@ -141,7 +133,7 @@ const MappingOptions = () => {
         zIndex: 10
       }}>
         <button
-          onClick={() => window.location.href = `/dashboard?email=${email}`}
+          onClick={() => window.location.href = `/dashboard`}
           style={{
             background: 'linear-gradient(135deg, #1453c6, #2a6ce8)',
             color: 'white',
@@ -366,3 +358,4 @@ const MappingOptions = () => {
 };
 
 export default MappingOptions;
+

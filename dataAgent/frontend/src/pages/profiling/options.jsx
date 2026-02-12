@@ -6,7 +6,6 @@ import GoogleDrivePicker from './GoogleDrivePicker';
 const ProfilingOptions = () => {
   const location = useLocation();
   const [email , setEmail] = useState(null);
-  const [token , setToken] = useState(null);
   const [activeOption, setActiveOption] = useState('drive'); 
   const [selectedFile, setSelectedFile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -29,20 +28,19 @@ const ProfilingOptions = () => {
   //     return res.json();
   //   })
   //   .then(data => {
-  //     console.log('✅ Authenticated:', data.email);
+  //     console.log('Ã¢Å“â€¦ Authenticated:', data.email);
   //     setEmail(data.email);
   //     setToken(data.access_token);
       
   //     // Store access token and email in localStorage for convenience
   //     if (data.access_token) {
-  //       localStorage.setItem('google_access_token', data.access_token);
   //     }
   //     localStorage.setItem('user_email', data.email);
       
   //     setIsLoading(false);
   //   })
   //   .catch(error => {
-  //     console.error('❌ Auth error:', error);
+  //     console.error('Ã¢ÂÅ’ Auth error:', error);
   //     // Redirect to landing page if not authenticated
   //     window.location.href = `${process.env.REACT_APP_FRONTEND_URL}`;
   //   });
@@ -52,33 +50,28 @@ const ProfilingOptions = () => {
     // 1. Get params from URL (Passed from Dashboard)
     const queryParams = new URLSearchParams(window.location.search);
     const urlEmail = queryParams.get("email");
-    const urlToken = queryParams.get("token");
 
     // 2. Get params from LocalStorage (Refresh / Back Button)
     const storedEmail = localStorage.getItem("user_email");
-    const storedToken = localStorage.getItem("google_access_token");
 
     if (urlEmail && urlEmail !== "undefined") {
-      console.log("📥 Receiving Session in Profiling Options...");
+      console.log("Ã°Å¸â€œÂ¥ Receiving Session in Profiling Options...");
       
       // Save valid data to storage
       localStorage.setItem("user_email", urlEmail);
-      if (urlToken) localStorage.setItem("google_access_token", urlToken);
 
       // Update State
       setEmail(urlEmail);
-      setToken(urlToken);
 
-      // 🧹 Clean the URL
+      // Ã°Å¸Â§Â¹ Clean the URL
       window.history.replaceState({}, document.title, window.location.pathname);
     } 
     else if (storedEmail && storedEmail !== "undefined") {
-      console.log("♻️ Restoring Session from Storage...");
+      console.log("Ã¢â„¢Â»Ã¯Â¸Â Restoring Session from Storage...");
       setEmail(storedEmail);
-      setToken(storedToken);
     } 
     else {
-      console.warn("⛔ No session found. Redirecting...");
+      console.warn("Ã¢â€ºâ€ No session found. Redirecting...");
       // Optional: Redirect to landing page if critical
       // window.location.href = process.env.REACT_APP_BASE_FRONTEND_URL;
     }
@@ -119,61 +112,62 @@ const showDrive = () => {
   
   
 
-  // ✅ NEW: Handle Google Picker file selection
+  // Ã¢Å“â€¦ NEW: Handle Google Picker file selection
   const handleGooglePickerFileSelected = async (fileId, fileName, mimeType) => {
     if (!email) {
         alert("Session lost. Please refresh or login again.");
         return;
     }
 
-    console.log('📁 File selected from Google Picker:', { fileId, fileName, mimeType });
+    console.log('Ã°Å¸â€œÂ File selected from Google Picker:', { fileId, fileName, mimeType });
     showLoader("Fetching file from Google Drive...");
     
     try {
-      const res = await fetch(`${process.env.REACT_APP_BASE_BACKEND_URL}/api/drive/getfile?email=${encodeURIComponent(email)}&file_id=${fileId}`);
+      const emailParam = email ? `&email=${encodeURIComponent(email)}` : "";
+      const res = await fetch(`${process.env.REACT_APP_BASE_BACKEND_URL}/api/drive/getfile?file_id=${fileId}${emailParam}`, {
+        credentials: 'include'
+      });
       const data = await res.json();
       
       if (!res.ok) {
         // Show detailed error message
-        alert(`❌ Error: ${data.error}\n\n${data.details || ''}\n\n${data.suggestion || ''}`);
+        alert(`Ã¢ÂÅ’ Error: ${data.error}\n\n${data.details || ''}\n\n${data.suggestion || ''}`);
         throw new Error(data.error);
       }
       
       const safePath = data.local_path.replace(/\\/g, '/');
-      window.location.href = `/profiling/preview?email=${encodeURIComponent(email)}&filename=${encodeURIComponent(fileName)}&local_path=${encodeURIComponent(safePath)}`;
+      window.location.href = `/profiling/preview?filename=${encodeURIComponent(fileName)}&local_path=${encodeURIComponent(safePath)}`;
     } catch (err) {
       console.error('Error fetching file:', err);
     } finally {
       hideLoader();
     }
   };
-
-  
   const uploadLocal = async (fileToUpload) => {
-    const file = fileToUpload || selectedFile;
-    
-    if (!file) return alert("Please select a file first");
+    const file = fileToUpload || selectedFile;
+
+    if (!file) return alert("Please select a file first");
     if (!email) return alert("Session lost. Please refresh or login again.");
 
-    const form = new FormData();
-    form.append('email', email);
-    form.append('file', file); 
-     showLoader("Uploading file...");
-    try {
-      const res = await fetch(`${process.env.REACT_APP_BASE_BACKEND_URL}/api/upload_local`, { method: 'POST', body: form });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      const safePath = data.local_path.replace(/\\/g, '/');
-      window.location.href = `/profiling/preview?email=${encodeURIComponent(email)}&filename=${encodeURIComponent(data.name)}&local_path=${encodeURIComponent(safePath)}`;
-    } catch (err) {
-      alert(err.message);
-    } finally { hideLoader(); }
-  };
-    
+    const form = new FormData();
+    form.append('email', email);
+    form.append('file', file);
+    showLoader("Uploading file...");
+    try {
+      const res = await fetch(`${process.env.REACT_APP_BASE_BACKEND_URL}/api/upload_local`, { method: 'POST', body: form });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const safePath = data.local_path.replace(/\\/g, '/');
+      window.location.href = `/profiling/preview?filename=${encodeURIComponent(data.name)}&local_path=${encodeURIComponent(safePath)}`;
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      hideLoader();
+    }
+  };
   const handleLogout = async () => {
     // 1. Clear Local Storage (Crucial)
     localStorage.removeItem("user_email");
-    localStorage.removeItem("google_access_token");
     
     // 3. Redirect to Landing Page
     window.location.href = `${process.env.REACT_APP_BASE_FRONTEND_URL}?action=logout`;
@@ -215,7 +209,7 @@ const showDrive = () => {
         zIndex: 10
       }}>
         <button
-          onClick={() => window.location.href = `/dashboard?email=${email}`}
+          onClick={() => window.location.href = `/dashboard`}
           style={{
             background: 'linear-gradient(135deg, #1453c6, #2a6ce8)',
             color: 'white',
@@ -456,3 +450,4 @@ const showDrive = () => {
 };
 
 export default ProfilingOptions;
+

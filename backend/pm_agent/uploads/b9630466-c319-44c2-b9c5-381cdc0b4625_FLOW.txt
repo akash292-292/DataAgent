@@ -1,0 +1,27 @@
+User provides Google Drive folder URL 
+    ↓
+Extract folder ID from URL
+    ↓
+Fetch list of files from Google Drive
+    ↓
+Show files to user with processing status
+    ↓
+User selects files to process
+    ↓
+For each selected file:
+    - Download from Google Drive
+    - Extract text (PDF, DOCX, TXT)
+    - Split into chunks
+    - Generate embeddings
+    - Store in ChromaDB + SQLite metadata
+User asks a question
+    ↓
+Hybrid search in ChromaDB (semantic + keyword)
+    ↓
+Retrieve relevant document chunks
+    ↓
+Combine chunks as context
+    ↓
+Generate answer using Flan-T5 model
+    ↓
+Return answer to user

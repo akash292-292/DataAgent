@@ -1,0 +1,44 @@
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+
+# Web
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Database
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+alembic==1.12.1
+
+# Forms / uploads
+python-multipart==0.0.6
+
+# Auth & Security
+python-jose==3.3.0
+cryptography==41.0.7
+passlib==1.7.4
+bcrypt==4.1.2
+python-dotenv==1.0.0
+
+# Pydantic
+pydantic==2.5.3
+pydantic-core==2.14.6
+pydantic-settings==2.1.0
+
+# Document Processing
+reportlab==4.0.7
+PyPDF2==3.0.1
+pdfplumber==0.10.3
+openpyxl==3.1.5
+python-docx==1.1.0
+python-pptx==0.6.23
+
+# AI / Embeddings (CPU SAFE)
+numpy<2.0.0
+torch==2.1.2+cpu
+sentence-transformers==5.1.2
+transformers==4.41.2
+huggingface_hub>=0.19.0
+
+# Vector DB
+pinecone>=4.0.0

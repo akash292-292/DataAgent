@@ -1,0 +1,37 @@
+✅ Final, agreed stack (one last time)
+
+LLM: Gemini (via google-generativeai) — generation + embeddings
+
+Vector DB: Chroma with FAISS index (Chroma manages collections/metadata; FAISS does fast search)
+
+Embeddings: Produced by Gemini (we call Gemini embed API) then store those embeddings in Chroma
+
+Backend: FastAPI
+
+File readers: PyPDF / python-docx / text readers as needed
+
+Env: .env for GEMINI_API_KEY, other local config
+
+
+
+flow:
+Short note on embeddings (so we're crystal clear)
+
+We send text chunks to the Gemini embedding model (via google-generativeai).
+
+Gemini returns vector embeddings.
+
+We store those vectors + metadata (filename, hash, timestamp, chunk_index) into Chroma.
+
+Chroma uses FAISS for the actual nearest-neighbor search under the hood.
+So: Chroma stores & manages — Gemini creates the vectors.
+
+
+
+
+| Layer          | Technology        |
+| -------------- | ----------------- |
+| **LLM**        | Gemini API        |
+| **Embeddings** | Gemini Embeddings |
+| **Vector DB**  | ChromaDB          |
+| **Backend**    | FastAPI           |

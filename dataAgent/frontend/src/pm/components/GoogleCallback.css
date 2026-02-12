@@ -1,0 +1,82 @@
+.pm-scope .callback-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #f5f7fa; /* Changed from gradient to light neutral */
+  padding: 20px;
+}
+
+.pm-scope .callback-page .container {
+  width: 100%;
+  max-width: 500px;
+}
+
+.pm-scope .callback-page .card {
+  background: white;
+  border-radius: 12px;
+  padding: 40px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  text-align: center;
+}
+
+.pm-scope .callback-page h2 {
+  color: #333;
+  margin-bottom: 10px;
+  font-size: 24px;
+}
+
+.pm-scope .callback-page p {
+  color: #666;
+  margin-bottom: 20px;
+}
+
+.pm-scope .loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #667eea;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 20px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.pm-scope .error-icon {
+  font-size: 48px;
+  margin-bottom: 20px;
+  color: #dc2626;
+}
+
+.pm-scope .loading-icon {
+  font-size: 48px;
+  margin-bottom: 20px;
+  color: #3b82f6;
+  animation: spin 2s linear infinite;
+}
+
+.pm-scope .error-message {
+  color: #e74c3c;
+  font-weight: 500;
+  margin-bottom: 20px;
+}
+
+.pm-scope .callback-page .btn {
+  background-color: #4a67ff;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 6px;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.pm-scope .callback-page .btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+}

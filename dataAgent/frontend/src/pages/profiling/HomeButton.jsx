@@ -5,7 +5,15 @@ const HomeButton = ({ email, position = 'absolute' }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  if (location.pathname === "/" || location.pathname === "/dashboard") {
+  if (
+    location.pathname === "/" ||
+    location.pathname === "/dashboard" ||
+    location.pathname === "/pm" ||
+    location.pathname === "/home" ||
+    location.pathname === "/projects" ||
+    location.pathname === "/callback" ||
+    location.pathname === "/email-login"
+  ) {
     return null;
   }
   return (
@@ -27,7 +35,7 @@ const HomeButton = ({ email, position = 'absolute' }) => {
         transition: 'transform 0.2s ease',
         zIndex: 9999
       }}
-      onClick={() => navigate(`/dashboard?email=${email}`)}
+      onClick={() => navigate(`/dashboard`)}
       onMouseEnter={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
       onMouseLeave={(e) => e.currentTarget.style.transform = 'scale(1)'}
     >

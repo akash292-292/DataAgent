@@ -1,287 +1,127 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useLocation , useNavigate } from "react-router-dom";
-
-// Note: GoogleDrivePicker import is removed as we are using local file selection
+import { useLocation, useNavigate } from "react-router-dom";
 
 const FileSelection = () => {
     const location = useLocation();
     const navigate = useNavigate();
+
     const [sourceFile, setSourceFile] = useState(null);
     const [targetFile, setTargetFile] = useState(null);
     const [loading, setLoading] = useState(false);
     const [cardVisible, setCardVisible] = useState(false);
 
-    const [email , setEmail] = useState(null);
-    const [token, setToken] = useState(null);
+    const [email, setEmail] = useState(null);
 
-    // Refs for the hidden file inputs
     const sourceInputRef = useRef(null);
     const targetInputRef = useRef(null);
 
-    
-    const showLoader = (msg = "Loading...") => setLoading(msg);
+    const showLoader = () => setLoading(true);
     const hideLoader = () => setLoading(false);
-    
-    // useEffect(() => {
-    //     // Verify session with backend using cookie
-    //     fetch(`${process.env.REACT_APP_BASE_BACKEND_URL}/api/verify-session`, {
-    //       credentials: 'include'  // CRITICAL: Sends cookies
-    //     })
-    //     .then(res => {
-    //       if (!res.ok) {
-    //         throw new Error('Not authenticated');
-    //       }
-    //       return res.json();
-    //     })
-    //     .then(data => {
-    //       console.log('✅ Authenticated:', data.email);
-    //       setEmail(data.email);
-    //       setToken(data.access_token);
-          
-    //       // Store access token and email in localStorage for convenience
-    //       if (data.access_token) {
-    //         localStorage.setItem('google_access_token', data.access_token);
-    //       }
-    //       localStorage.setItem('user_email', data.email);
-          
-    //       setIsLoading(false);
-    //     })
-    //     .catch(error => {
-    //       console.error('❌ Auth error:', error);
-    //       // Redirect to landing page if not authenticated
-    //       window.location.href = `${process.env.REACT_APP_FRONTEND_URL}`;
-    //     });
-    //   }, []);
- 
+
+    // ================= SESSION RESTORE =================
     useEffect(() => {
-        // 1. Get params from URL (Passed from MappingOptions)
         const queryParams = new URLSearchParams(window.location.search);
         const urlEmail = queryParams.get("email");
-        const urlToken = queryParams.get("token");
 
-        // 2. Get params from LocalStorage (Refresh / Back Button)
         const storedEmail = localStorage.getItem("user_email");
-        const storedToken = localStorage.getItem("google_access_token");
 
         if (urlEmail && urlEmail !== "undefined") {
-            console.log("📥 Receiving Session in File Selection...");
-            
-            // Save valid data to storage
             localStorage.setItem("user_email", urlEmail);
-            if (urlToken) localStorage.setItem("google_access_token", urlToken);
 
-            // Update State
             setEmail(urlEmail);
-            setToken(urlToken);
 
-            // 🧹 Clean the URL
             window.history.replaceState({}, document.title, window.location.pathname);
-        } 
-        else if (storedEmail && storedEmail !== "undefined") {
-            console.log("♻️ Restoring Session from Storage...");
+        } else if (storedEmail && storedEmail !== "undefined") {
             setEmail(storedEmail);
-            setToken(storedToken);
-        } 
-        else {
-            console.warn("⛔ No session found. Redirecting...");
-            // Optional: Redirect to landing page
-            // window.location.href = process.env.REACT_APP_BASE_FRONTEND_URL || '/';
         }
-        
+
         setTimeout(() => setCardVisible(true), 100);
     }, []);
 
-    useEffect(() => {
-        setTimeout(() => setCardVisible(true), 100);
-    }, []);
-    
-    // --- NEW: Handlers to trigger hidden file inputs ---
+    // ================= FILE PICKER HANDLERS =================
     const handleSourceSelectClick = () => {
-        // Triggers the hidden file input element
-        sourceInputRef.current.click();
+        if (sourceInputRef.current) {
+            sourceInputRef.current.click();
+        }
     };
 
     const handleTargetSelectClick = () => {
-        // Triggers the hidden file input element
-        targetInputRef.current.click();
-    };
-
-    // --- NEW: Handlers for when a file is actually selected ---
-    const handleSourceFileChange = (event) => {
-        const file = event.target.files[0];
-        if (file) {
-            setSourceFile(file);
+        if (targetInputRef.current) {
+            targetInputRef.current.click();
         }
     };
 
-    const handleTargetFileChange = (event) => {
-        const file = event.target.files[0];
-        if (file) {
-            setTargetFile(file);
+    const handleSourceFileChange = (e) => {
+        if (e.target.files[0]) {
+            setSourceFile(e.target.files[0]);
         }
     };
-    // --------------------------------------------------------
-    
+
+    const handleTargetFileChange = (e) => {
+        if (e.target.files[0]) {
+            setTargetFile(e.target.files[0]);
+        }
+    };
+
+    // ================= LOGOUT =================
+    const handleLogout = () => {
+        localStorage.removeItem("user_email");
+        window.location.href =
+            `${process.env.REACT_APP_BASE_FRONTEND_URL || "/"}`;
+    };
+
+    // ================= MAIN ACTION =================
     const handleContinue = async () => {
         if (!sourceFile || !targetFile || !email) {
-        alert("Please select both files and ensure your email is present.");
-        return;
-    }
-    if (!email) {
-            alert("Session expired. Please refresh the page.");
+            alert("Please select both files and ensure your email is present.");
             return;
         }
-    const accessToken = token || localStorage.getItem('google_access_token');
-    if (!accessToken) {
-        alert("❌ No authentication token found. Please login again.");
-        // Redirect to login page
-        window.location.href = `${process.env.REACT_APP_FRONTEND_URL || '/'}`;
-        return;
-    }
-     
-    console.log('✅ All validation passed. Email:', email);
-    console.log('✅ Token exists:', accessToken ? 'Yes' : 'No');
-    showLoader("Uploading files...");
-    
-    try {
-        // 1. Upload Source File
-        const sourceUpload = await uploadFile(sourceFile , "source");
-        showLoader("Source file uploaded. Uploading Target file...");
-        
-        // 2. Upload Target File
-        const targetUpload = await uploadFile(targetFile , "target");
-        showLoader("Starting Smart Mapping (May take 30-60 seconds)...");
 
-        // 3. Run Mapping on the backend
-        // 3. Run Mapping on the backend
-const mappingResult = await startMapping(
-    sourceUpload.local_path.replace(/\\/g, '/'),  // Normalize path
-    targetUpload.local_path.replace(/\\/g, '/'),  // Normalize path
-    "source",   // ✅ ADD: Source file type
-    "target",   // ✅ ADD: Target file type
-    email
-);
+        showLoader();
 
-        // 4. Success: Navigate and pass the mapping result
-        hideLoader();
-        alert(`Mapping successful! Result saved to Drive. URL: ${mappingResult.file_url}`);
-        
-        navigate('/finallink', {
-            state: { 
-                sourceFile: sourceUpload.name, // Pass names or paths as strings
-                targetFile: targetUpload.name, 
-                mapping: mappingResult.mapping,
-                fileUrl: mappingResult.file_url,
-                // Add any other details you need on the next page
-                email: email,
-                token: accessToken
+        try {
+            const formData = new FormData();
+            formData.append("email", email);
+            formData.append("host_file", sourceFile);
+            formData.append("target_file", targetFile);
+            formData.append("host_system", "Host System");
+            formData.append("target_system", "Target System");
+
+            const response = await fetch(
+                `${process.env.REACT_APP_BASE_BACKEND_URL}/api/mapping/smart_mapping_with_files`,
+                {
+                    method: "POST",
+                    body: formData,
+                }
+            );
+
+            const result = await response.json(); // ✅ READ ONCE
+
+            if (!response.ok) {
+                throw new Error(result.detail || "Mapping failed");
             }
-        });
-        
-    } catch (error) {
-        console.error("Mapping Process Error:", error);
-        hideLoader();
-        alert(`Process Failed: ${error.message}. Check the console for details.`);
-        if (error.message.includes('authentication') || 
-            error.message.includes('login') || 
-            error.message.includes('credentials')) {
-            alert(`${error.message}\n\nRedirecting to login page...`);
-            setTimeout(() => {
-                window.location.href = `${process.env.REACT_APP_FRONTEND_URL || '/'}`;
-            }, 2000);
-        } else {
-            alert(`❌ Process Failed: ${error.message}\n\nCheck the console for details.`);
+
+            hideLoader();
+            alert("Mapping successful! Result saved to Drive.");
+
+            navigate("/finallink", {
+                state: {
+                    mapping: result.mapping,
+                    fileUrl: result.file_url,
+                    email
+                },
+            });
+
+        } catch (err) {
+            console.error("Mapping error:", err);
+            hideLoader();
+            alert(`Process Failed: ${err.message}`);
         }
-    }
     };
-
-    const handleLogout = async () => {
-    // 1. Clear Local Storage (Crucial)
-    localStorage.removeItem("user_email");
-    localStorage.removeItem("google_access_token");
-    
-    // 3. Redirect to Landing Page
-    window.location.href = `${process.env.REACT_APP_BASE_FRONTEND_URL}?action=logout`;
-  };
-
 
     const isReadyToContinue = sourceFile !== null && targetFile !== null;
 
-    // Add this inside the FileSelection component, before handleContinue
-
-const BACKEND_URL = `${process.env.REACT_APP_BASE_BACKEND_URL}/api/mapping`;
-
-// Helper to upload a single file
-const uploadFile = async (file , fileType) => {
-    const userEmail = email; // Use the email derived from the URL
-    const accessToken = token || localStorage.getItem('google_access_token');
-    if (!accessToken) {
-        throw new Error('❌ No authentication token found. Please login again.');
-    }
-    const formData = new FormData();
-    formData.append('email', userEmail);
-    formData.append('file', file);
-    formData.append('file_type', fileType);
-    
-    // Calls the /api/upload_local route
-    const response = await fetch(`${process.env.REACT_APP_BASE_BACKEND_URL}/api/mapping_upload_local`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${accessToken}`  // ✅ CRITICAL: Send token here
-        },
-        body: formData,
-    });
-    
-    if (!response.ok) {
-        let errorData = await response.text();
-        try { errorData = JSON.parse(errorData); } catch {}
-        throw new Error(`Upload failed for ${file.name}: ${errorData.detail || errorData.error || response.statusText}`);
-    }
-    // Returns { name, local_path, preview }
-    return response.json(); 
-};
-
-// Helper to call the smart mapping endpoint
-const startMapping = async (hostFilePath, targetFilePath, hostFileType , targetFileType ,userEmail) => {
-    const accessToken = token || localStorage.getItem('google_access_token');
-    
-    if (!accessToken) {
-        throw new Error('❌ No authentication token found. Please login again.');
-    }
-    
-    console.log('🔑 Starting mapping with token for:', userEmail);
-    const formData = new FormData();
-    formData.append('email', userEmail);
-    // Use the 'local_path' result from the uploads as the file ID surrogate
-    formData.append('host_file_id' , hostFilePath);
-    formData.append('target_file_id' , targetFilePath);
-    formData.append('host_file_type', hostFileType);  
-    formData.append('target_file_type', targetFileType);
-    formData.append('host_system', 'Host System');
-    formData.append('target_system', 'Target System');
-
-    // Calls the /api/smart_mapping_with_files route
-    const response = await fetch(`${BACKEND_URL}/smart_mapping_with_files`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${accessToken}`  // ✅ CRITICAL: Send token here
-        },
-        body: formData,
-    });
-
-    if (!response.ok) {
-        let errorData = await response.text();
-        try { errorData = JSON.parse(errorData); } catch {}
-        throw new Error(`Mapping execution failed: ${errorData.detail || errorData.error || response.statusText}`);
-    }
-
-    return response.json(); // Returns the mapping result (mapping, file_url, preview, etc.)
-};
-
-// ...
-
-    // The Google Picker related function is removed/skipped as it's no longer needed for local files.
-    
+    // ================= UI (UNCHANGED) =================
     return (
         <>
             <link
@@ -656,7 +496,7 @@ const startMapping = async (hostFilePath, targetFilePath, hostFileType , targetF
                     }}
                 >
                     <a
-                        href={`/mapping/optionsMapping?email=${email}`}
+                        href={`/mapping/optionsMapping`}
                         style={{
                             color: "#1453c6",
                             textDecoration: "none",

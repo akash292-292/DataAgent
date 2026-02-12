@@ -11,7 +11,6 @@ const DriveSelection = () => {
     const [currentPickerTarget, setCurrentPickerTarget] = useState(null);
     const [cardVisible, setCardVisible] = useState(false);
     const [email, setEmail] = useState(null);
-    const [token, setToken] = useState(null);
     const showLoader = (msg = "Loading...") => setLoading(msg);
     const hideLoader = () => setLoading(false);
     const drivePickerRef = useRef(null);
@@ -20,22 +19,18 @@ const DriveSelection = () => {
         // 1. Get params from URL (Passed from MappingOptions)
         const queryParams = new URLSearchParams(window.location.search);
         const urlEmail = queryParams.get("email");
-        const urlToken = queryParams.get("token");
 
         // 2. Get params from LocalStorage (Refresh / Back Button)
         const storedEmail = localStorage.getItem("user_email");
-        const storedToken = localStorage.getItem("google_access_token");
 
         if (urlEmail && urlEmail !== "undefined") {
             console.log("📥 Receiving Session in Drive Selection...");
             
             // Save valid data to storage
             localStorage.setItem("user_email", urlEmail);
-            if (urlToken) localStorage.setItem("google_access_token", urlToken);
 
             // Update State
             setEmail(urlEmail);
-            setToken(urlToken);
 
             // 🧹 Clean the URL
             window.history.replaceState({}, document.title, window.location.pathname);
@@ -43,7 +38,6 @@ const DriveSelection = () => {
         else if (storedEmail && storedEmail !== "undefined") {
             console.log("♻️ Restoring Session from Storage...");
             setEmail(storedEmail);
-            setToken(storedToken);
         } 
         else {
             console.warn("⛔ No session found. Redirecting...");
@@ -115,13 +109,6 @@ const DriveSelection = () => {
                 return;
             }
 
-            const accessToken = token || localStorage.getItem('google_access_token');
-        
-        if (!accessToken) {
-            alert("❌ No authentication token found. Please login again.");
-            window.location.href = `${process.env.REACT_APP_FRONTEND_URL || '/'}`;
-            return;
-        }
             showLoader("Creating mapping...");
 
             try {
@@ -138,9 +125,6 @@ const DriveSelection = () => {
 
                 const response = await fetch(`${process.env.REACT_APP_BASE_BACKEND_URL}/api/mapping/smart_mapping_with_files`, {
                     method: 'POST',
-                    headers: {
-                    'Authorization': `Bearer ${accessToken}`  // ✅ ADD THIS LINE
-                },
                     body: formData
                 });
 
@@ -163,8 +147,7 @@ const DriveSelection = () => {
                         targetFile,
                         mappingResult: result,
                         fileUrl: result.file_url,
-                        email : email,
-                        token: accessToken
+                        email : email
                     }
                 });
 
@@ -180,7 +163,6 @@ const DriveSelection = () => {
     const handleLogout = async () => {
     // 1. Clear Local Storage (Crucial)
     localStorage.removeItem("user_email");
-    localStorage.removeItem("google_access_token");
     
     // 3. Redirect to Landing Page
     window.location.href = `${process.env.REACT_APP_BASE_FRONTEND_URL}?action=logout`;
@@ -543,7 +525,7 @@ const DriveSelection = () => {
                     }}
                 >
                     <a
-                        href={`/mapping/optionsMapping?email=${email}`}
+                        href={`/mapping/optionsMapping`}
                         style={{
                             color: "#1453c6",
                             textDecoration: "none",

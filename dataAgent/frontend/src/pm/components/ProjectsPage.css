@@ -1,0 +1,342 @@
+.pm-scope .projects-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+}
+
+.pm-scope .projects-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.pm-scope .projects-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.pm-scope .projects-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.pm-scope .user-email {
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.pm-scope .logout-btn {
+  padding: 8px 16px;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #374151;
+  transition: background 0.2s;
+}
+
+.pm-scope .logout-btn:hover {
+  background: #e5e7eb;
+}
+
+.pm-scope .projects-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px;
+}
+
+.pm-scope .projects-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.pm-scope .project-tile {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pm-scope .project-tile:hover {
+  border-color: #d1d5db;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.pm-scope .create-tile {
+  border: 2px dashed #d1d5db;
+  background: #f9fafb;
+}
+
+.pm-scope .create-tile:hover {
+  border-color: #9ca3af;
+  background: #f3f4f6;
+}
+
+.pm-scope .create-tile-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: #6b7280;
+}
+
+.pm-scope .create-tile-content svg {
+  color: #9ca3af;
+}
+
+.pm-scope .create-tile-content span {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.pm-scope .project-tile-content {
+  width: 100%;
+}
+
+.pm-scope .project-tile-content h3 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.pm-scope .project-date {
+  margin: 0;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* Modal Styles */
+.pm-scope .modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.pm-scope .modal-content {
+  background: #ffffff;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+.pm-scope .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.pm-scope .modal-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.pm-scope .modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pm-scope .modal-settings-btn,
+.pm-scope .modal-close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.pm-scope .modal-settings-btn:hover,
+.pm-scope .modal-close-btn:hover {
+  background: #f3f4f6;
+}
+
+.pm-scope .modal-body {
+  padding: 24px;
+}
+
+.pm-scope .project-name-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.pm-scope .input-icon {
+  position: absolute;
+  left: 12px;
+  font-size: 18px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.pm-scope .project-name-input {
+  width: 100%;
+  padding: 12px 16px 12px 40px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.pm-scope .project-name-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.pm-scope .project-name-input::placeholder {
+  color: #9ca3af;
+}
+
+.pm-scope .category-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.pm-scope .category-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 20px;
+  font-size: 14px;
+  color: #374151;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+}
+
+.pm-scope .category-tag:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+}
+
+.pm-scope .category-tag.selected {
+  background: #eff6ff;
+  border-color: #3b82f6;
+  color: #1e40af;
+}
+
+.pm-scope .category-icon {
+  font-size: 16px;
+}
+
+.pm-scope .modal-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.pm-scope .info-icon {
+  color: #6b7280;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.pm-scope .modal-info p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #6b7280;
+}
+
+.pm-scope .modal-footer {
+  padding: 16px 24px;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.pm-scope .create-btn {
+  padding: 10px 24px;
+  background: #e5e7eb;
+  color: #6b7280;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.pm-scope .create-btn:hover:not(:disabled) {
+  background: #d1d5db;
+}
+
+.pm-scope .create-btn:disabled {
+  background: #e5e7eb;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.pm-scope .create-btn:not(:disabled) {
+  background: #3b82f6;
+  color: #ffffff;
+}
+
+.pm-scope .create-btn:not(:disabled):hover {
+  background: #2563eb;
+}
+
+/* Scrollbar styling */
+.pm-scope .projects-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.pm-scope .projects-container::-webkit-scrollbar-track {
+  background: #f9fafb;
+}
+
+.pm-scope .projects-container::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 4px;
+}
+
+.pm-scope .projects-container::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}

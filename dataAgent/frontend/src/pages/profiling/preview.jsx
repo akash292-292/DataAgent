@@ -5,9 +5,8 @@ export default function Preview() {
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
 
-  const emailParam = searchParams.get("email");
   const storedEmail = localStorage.getItem("user_email");
-  const email = emailParam || storedEmail;
+  const email = storedEmail;
   const filename = searchParams.get("filename");
   // const [email,setEmail] = useState(null);
   // const [token , setToken] = useState(null);
@@ -40,7 +39,6 @@ export default function Preview() {
  const handleLogout = async () => {
     // 1. Clear Local Storage (Crucial)
     localStorage.removeItem("user_email");
-    localStorage.removeItem("google_access_token");
     
     // 3. Redirect to Landing Page
     window.location.href = `${process.env.REACT_APP_BASE_FRONTEND_URL}?action=logout`;
@@ -61,7 +59,7 @@ export default function Preview() {
       >
         {/* Back
         <button
-          onClick={() => (window.location.href = `/profiling/options?email=${email}`)}
+          onClick={() => (window.location.href = `/profiling/options`)}
           style={{
             background: "linear-gradient(135deg, #1453c6, #2a6ce8)",
             color: "white",
@@ -278,7 +276,6 @@ export default function Preview() {
 
           {/* Form */}
           <form method="get" action="/profiling/rules" onSubmit={handleSubmit}>
-            <input type="hidden" name="email" value={email} />
             <input type="hidden" name="filename" value={filename} />
             <input type="hidden" name="local_path" value={encodedPath} />
 
@@ -368,7 +365,7 @@ export default function Preview() {
           }}
         >
           <a
-            href={`/profiling/options?email=${email}`}
+            href={`/profiling/options`}
             style={{
               color: "#1453c6",
               textDecoration: "none",

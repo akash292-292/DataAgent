@@ -8,10 +8,8 @@ const ProfilingRules = () => {
   const navigate = useNavigate();
   const searchParams = new URLSearchParams(location.search);
   
-  const emailParam = searchParams.get('email');
-  const tokenParam = searchParams.get('access_token');
   const storedEmail = localStorage.getItem("user_email");
-  const email = emailParam || storedEmail;
+  const email = storedEmail;
 
   const filename = searchParams.get('filename');
   const localPath = searchParams.get('local_path');
@@ -146,7 +144,7 @@ const ProfilingRules = () => {
     formData.append('filename', filename);
     formData.append('local_path', localPath);
     formData.append('rules_json', JSON.stringify(currentRules));
-
+    console.log(JSON.stringify(currentRules))
     try {
       const res = await fetch(`${process.env.REACT_APP_BASE_BACKEND_URL}/api/run_validation`, {
         method: 'POST',
@@ -203,7 +201,6 @@ const ProfilingRules = () => {
   const handleLogout = async () => {
     // 1. Clear Local Storage (Crucial)
     localStorage.removeItem("user_email");
-    localStorage.removeItem("google_access_token");
     
     // 3. Redirect to Landing Page
     window.location.href = `${process.env.REACT_APP_BASE_FRONTEND_URL}?action=logout`;
@@ -221,7 +218,7 @@ const ProfilingRules = () => {
             <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
               <button
                 className="btn btn-primary"
-                onClick={() => navigate(`/profiling/preview?email=${email}&filename=${filename}&local_path=${localPath}`)}
+                onClick={() => navigate(`/profiling/preview?filename=${filename}&local_path=${localPath}`)}
                 style={{ whiteSpace: 'nowrap', minWidth: 'auto', maxWidth: 'none', padding: '12px 20px' }}
               >
                 <i className="fas fa-arrow-left"></i>
