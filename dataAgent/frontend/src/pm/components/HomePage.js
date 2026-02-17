@@ -12,7 +12,7 @@ import './HomePage.css';
 
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 // 🚨 CRITICAL: Ensure you have REACT_APP_GOOGLE_DEVELOPER_API_KEY in your .env
-const DEVELOPER_API_KEY = process.env.REACT_APP_GOOGLE_DEVELOPER_API_KEY; 
+const DEVELOPER_API_KEY = process.env.REACT_APP_GOOGLE_API_KEY; 
 const DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.readonly'; 
 const FASTAPI_DRIVE_UPLOAD_URL = process.env.REACT_APP_API_URL + '/api/upload-from-drive'; 
 
@@ -1494,7 +1494,7 @@ const pickerCallback = useCallback((data, userEmail) => {
         // Send question with playbook context
         const questionFormData = new FormData();
         questionFormData.append('question', trimmedQuestion);
-        questionFormData.append('file_context', combinedContext);
+        // questionFormData.append('file_context', combinedContext);
         questionFormData.append('mandatory_file_ids', JSON.stringify(playbookFileIds));
         questionFormData.append('chat_id', activeChatSessionId);
         if (user?.email) {
@@ -2851,7 +2851,8 @@ const pickerCallback = useCallback((data, userEmail) => {
                     const ADMIN_EMAILS = [
                       "shaik.sharuk@forsysinc.com",
                       "archana.machanpally@forsysinc.com",
-                                  "sowjanya.pilla@forsysinc.com"
+                      "sowjanya.pilla@forsysinc.com",
+                      "nihal.yemula@forsysinc.com"
 
                       // Add more admin emails here as needed
                     ];

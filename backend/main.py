@@ -15,6 +15,8 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from config.settings import ALLOWED_ORIGINS, FRONTEND_URL
+from services.gemini_token_service import gemini_token_service
+from core.redis import redis
 
 # Import routers (modules)
 from api import auth_routes
@@ -99,7 +101,7 @@ app.include_router(validation_routes.router)
 app.include_router(mapping_routes.router)
 
 
-def mount_pm_portal_if_available(main_app: FastAPI):
+async def mount_pm_portal_if_available(main_app: FastAPI):
     """
     Optionally mount PM Portal backend under /pm without impacting existing routes.
     """
@@ -129,22 +131,23 @@ def mount_pm_portal_if_available(main_app: FastAPI):
         logger.warning("PM env file not found: %s", pm_env_path)
 
     # Prefer PM-specific DB URL so PM module points to the exact DB it originally used.
-    pm_db_url = os.getenv("PM_PORTAL_DATABASE_URL") or os.getenv("DATABASE_URL")
-    if pm_db_url:
-        os.environ["DATABASE_URL"] = pm_db_url
-        logger.info("PM DATABASE_URL configured from env.")
-    else:
-        allow_sqlite_fallback = os.getenv("PM_PORTAL_ALLOW_SQLITE_FALLBACK", "false").lower() == "true"
-        if allow_sqlite_fallback:
-            pm_sqlite = pathlib.Path(pm_backend_dir) / "pm_portal.db"
-            os.environ["DATABASE_URL"] = f"sqlite:///{pm_sqlite.as_posix()}"
-            logger.warning("PM DATABASE_URL missing. Using SQLite fallback at %s", pm_sqlite)
-        else:
-            logger.error(
-                "PM backend not mounted: DATABASE_URL missing. "
-                "Set PM_PORTAL_DATABASE_URL (preferred) or DATABASE_URL in PM env."
-            )
-            return
+    # pm_db_url = os.getenv("PM_PORTAL_DATABASE_URL") or os.getenv("DATABASE_URL")
+    # if pm_db_url:
+    #     os.environ["DATABASE_URL"] = pm_db_url
+    #     logger.info("PM DATABASE_URL configured from env.")
+    # else:
+    #     allow_sqlite_fallback = os.getenv("PM_PORTAL_ALLOW_SQLITE_FALLBACK", "false").lower() == "true"
+    #     if allow_sqlite_fallback:
+    #         pm_sqlite = pathlib.Path(pm_backend_dir) / "pm_portal.db"
+    #         os.environ["DATABASE_URL"] = f"sqlite:///{pm_sqlite.as_posix()}"
+    #         logger.warning("PM DATABASE_URL missing. Using SQLite fallback at %s", pm_sqlite)
+    #     else:
+    #         logger.error(
+    #             "PM backend not mounted: DATABASE_URL missing. "
+    #             "Set PM_PORTAL_DATABASE_URL (preferred) or DATABASE_URL in PM env."
+    #         )
+    #         return
+
 
     try:
         if hasattr(sys.stdout, "reconfigure"):
@@ -188,6 +191,15 @@ def mount_pm_portal_if_available(main_app: FastAPI):
 
         main_app.mount("/pm", pm_app)
         logger.info("PM backend mounted at /pm from %s", pm_main_file)
+        #   0. Check Redis Connection
+        try:
+            print("[STARTUP] Checking Redis connection...")
+            await redis.ping()
+            print("[OK] Redis is running and connected")
+            await gemini_token_service.seed_gemini_keys(redis)
+        except Exception as e:
+            print(f"[WARNING] Redis connection failed: {str(e)}")
+            print("[WARNING] Continuing startup without Redis - some features may not work correctly")
         for name, module in original_modules.items():
             sys.modules[name] = module
     except Exception as exc:
@@ -196,7 +208,10 @@ def mount_pm_portal_if_available(main_app: FastAPI):
         logger.exception("Failed to mount PM backend from %s: %s", pm_main_file, exc)
 
 
-mount_pm_portal_if_available(app)
+@app.on_event("startup")
+async def startup_event():
+    """Initialize PM backend on app startup"""
+    await mount_pm_portal_if_available(app)
 
 
 # -------------------------------------------------

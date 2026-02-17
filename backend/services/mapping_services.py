@@ -8,7 +8,7 @@ import re
 import json
 import logging
 import base64
-from datetime import datetime
+from datetime import datetime, time
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from typing import Any, Dict, List, Optional, Tuple
@@ -663,12 +663,12 @@ Return **only the JSON array** — nothing else.
 """
 
 
-def _run_gemini_sync(prompt: str) -> str:
+def _run_gemini_sync(model,prompt: str) -> str:
     """Call Gemini synchronously"""
-    if gemini_model is None:
+    if model is None:
         raise RuntimeError("No Gemini model configured")
     
-    resp = gemini_model.generate_content([prompt])
+    resp = model.generate_content([prompt])
     
     if hasattr(resp, "text") and resp.text:
         return resp.text
@@ -683,12 +683,12 @@ def _run_gemini_sync(prompt: str) -> str:
     raise ValueError("Empty or invalid response from Gemini")
 
 
-def run_gemini_with_timeout(prompt: str, timeout_seconds: float = DEFAULT_LLM_TIMEOUT) -> str:
+def run_gemini_with_timeout(model,prompt: str, timeout_seconds: float = DEFAULT_LLM_TIMEOUT) -> str:
     """Run Gemini with timeout"""
-    if gemini_model is None:
+    if model is None:
         raise RuntimeError("Gemini not configured")
     
-    future = _EXECUTOR.submit(_run_gemini_sync, prompt)
+    future = _EXECUTOR.submit(_run_gemini_sync,model, prompt)
     try:
         return future.result(timeout=timeout_seconds)
     except FutureTimeout:
@@ -737,22 +737,47 @@ def normalize_llm_mapping_response(parsed: Any, host_system: str, target_system:
     return normalized
 
 
-def llm_field_mapping(
+async def llm_field_mapping(
     host_fields: Any,
     target_fields: Any,
     host_system: str,
     target_system: str,
-    llm_timeout: float = DEFAULT_LLM_TIMEOUT
+    llm_timeout: float = DEFAULT_LLM_TIMEOUT,
+    user: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """Try LLM first, fallback to hybrid if it fails"""
-    if gemini_model is None:
-        logger.warning("⚠️ LLM not configured — using hybrid fallback")
-        return _fallback_to_hybrid(host_fields, target_fields)
+    # if gemini_model is None:
+    #     logger.warning("⚠️ LLM not configured — using hybrid fallback")
+    #     return _fallback_to_hybrid(host_fields, target_fields)
+    model = None
 
     prompt = build_mapping_prompt(host_fields, target_fields, host_system, target_system)
 
     try:
-        text = run_gemini_with_timeout(prompt, timeout_seconds=llm_timeout)
+        from services.gemini_token_service import gemini_token_service
+        Redis_Key_Meta,Redis_Key =  await gemini_token_service._get_available_api_key(user)
+        if Redis_Key:
+            try:
+                genai.configure(api_key=Redis_Key)
+                model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+                logger.info(f"✅ Gemini configured with model with Redis Key: {GEMINI_MODEL_NAME}")
+            except Exception as e:
+                model = None
+                logger.error(f"❌ Failed to configure Gemini: {e}")
+        elif GEMINI_KEY:
+            try:
+                genai.configure(api_key=GEMINI_KEY)
+                model = genai.GenerativeModel(GEMINI_MODEL_NAME)
+                logger.info(f"✅ Gemini configured with model with GEMINI_KEY: {GEMINI_MODEL_NAME}")
+            except Exception as e:
+                model = None
+                logger.error(f"❌ Failed to configure Gemini: {e}")
+                logger.warning("⚠️ GEMINI_API_KEY not set — LLM calls will use hybrid fallback")
+        else:
+            logger.warning("⚠️ No Gemini key available — using hybrid fallback")
+            return _fallback_to_hybrid(host_fields, target_fields)    
+
+        text = run_gemini_with_timeout(model,prompt, timeout_seconds=llm_timeout)
         
         logger.info(f"🔍 RAW GEMINI RESPONSE (first 500 chars): {text[:500]}")
         if not text:
@@ -760,6 +785,8 @@ def llm_field_mapping(
         
         # Remove markdown code blocks
         text = text.replace("```json", "").replace("```", "").strip()
+        await gemini_token_service._release_key(Redis_Key_Meta)
+        await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
         
         # Find JSON array
         match = re.search(r"(\[[\s\S]*\])", text)

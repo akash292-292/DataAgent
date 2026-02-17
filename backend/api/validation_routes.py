@@ -61,7 +61,7 @@ async def api_get_validation_rules(
     sample_rows = df.sample(n=sample_size).replace({float("nan"): None}).to_dict(orient="records")
 
     logger.info(f"[Gemini Input] Columns={headers}")
-    rules = generate_validation_rules(headers, sample_rows)
+    rules = await generate_validation_rules(headers, sample_rows,user=email)
     logger.info(f"[Gemini Output] Rules generated")
 
     # Ensure consistent return format
@@ -132,7 +132,7 @@ async def api_regenerate_rules(
     sample_rows = df_filtered.head(5).replace({float("nan"): None}).to_dict(orient="records")
 
     logger.info("[RegenerateRules] Sending user edits to Gemini...")
-    new_rules = generate_validation_rules(active_headers, sample_rows, user_guidance=user_edits)
+    new_rules = await generate_validation_rules(active_headers, sample_rows, user_guidance=user_edits, user=email)
 
     if isinstance(new_rules, dict):
         flattened = []

@@ -110,12 +110,13 @@ async def smart_with_files(
         # Lazy import to avoid heavy model initialization during backend startup.
         from services.mapping_services import llm_field_mapping
 
-        mapping = llm_field_mapping(
+        mapping = await llm_field_mapping(
             host_fields,
             target_fields,
             host_system,
             target_system,
             llm_timeout=200.0,
+            user=user_email,
         )
 
         parent_id = host_meta["parents"][0] if host_meta.get("parents") else None

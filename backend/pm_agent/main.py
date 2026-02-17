@@ -28,6 +28,7 @@ import hashlib
 import asyncio
 from models import SessionLocal
 from services.pinecone_service import PineconeService
+from core.redis import redis
 
 
 
@@ -1468,7 +1469,7 @@ async def gemini_chat(request: dict):
         # If a system message exists, combine ours ahead of it
         messages = [{"role": "system", "content": system_prompt}] + messages
 
-    return gemini_service.chat(messages, request.get("max_tokens", 3000))
+    return await gemini_service.chat(messages, request.get("max_tokens", 3000))
 
 # Helper function to process a single file
 async def process_single_file(
@@ -2505,334 +2506,348 @@ async def ask_chatbot_question(
         use_pinecone_search = False  # Initialize Pinecone search flag
         
         _save_chat_message(db, chat_id, "user", question, user_email)
-        
-        if file_context:
-            # Use provided file_context directly (e.g., from multiple mandatory files)
-            # This maintains backward compatibility for mandatory files
-            context_text = file_context
-            print(f"[ASK-QUESTION] Using provided file_context (PLAYBOOK/MANDATORY FILES)")
-            print(f"[ASK-QUESTION] Context length: {len(context_text)} characters")
-            if mandatory_file_ids:
-                try:
-                    import json
-                    ids = json.loads(mandatory_file_ids)
-                    print(f"[ASK-QUESTION] Mandatory file IDs used: {ids}")
-                    # Fetch file names for these IDs
-                    if ids:
-                        mandatory_files = db.query(MandatoryFile).filter(MandatoryFile.id.in_(ids)).all()
-                        file_names = [f.file_name for f in mandatory_files]
-                        print(f"[ASK-QUESTION] Documents being used: {file_names}")
-                except:
-                    print(f"[ASK-QUESTION] Mandatory file IDs (raw): {mandatory_file_ids}")
-            print(f"[ASK-QUESTION] Question: {question[:200]}...")
-
-        elif file_id:
-            uploaded_file = db.query(UploadedFile).filter(UploadedFile.id == file_id).first()
-            if not uploaded_file:
-                return {
-                    "success": False,
-                    "error": f"File with ID {file_id} not found.",
+        cache_res = await redis.get(question)  # Touch the cache to prevent cold start delays during processing
+        if cache_res:
+            print(f"[ASK-QUESTION] Cache result is :{cache_res[:200]}...")
+            _save_chat_message(db, chat_id, "assistant", cache_res, user_email)
+            return {
+                    "success": True,
+                    "answer": cache_res, 
+                    "response": cache_res,
+                    "file_id": file_id,
                     "chat_id": chat_id
                 }
-            print(f"[ASK-QUESTION] Document being used: {uploaded_file.file_name} (ID: {file_id})")
-            print(f"[ASK-QUESTION] Querying Pinecone shared index for file_id {file_id}")
-            query_embedding = embedding_service.embed_query(question)
-            matches = pinecone_service.query_file_chunks(
-              query_embedding=query_embedding,
-              file_id=file_id,
-              top_k=5
-            )
-             # 3️⃣ Build context from Pinecone results
-            if matches:
-                chunk_texts = []
-                for match in matches:
-                    metadata = match.get("metadata", {})
-                    text = metadata.get("text", "")
-                    score = match.get("score", 0.0)
-                    chunk_texts.append(f"[Score: {score:.3f}]\n{text}")
-                context_text = "\n\n---\n\n".join(chunk_texts)
-                print(f"[ASK-QUESTION] Using Pinecone context ({len(matches)} chunks, length: {len(context_text)})")
-            else:
-                print("[ASK-QUESTION] No Pinecone matches found, falling back to full text")
-                context_text = uploaded_file.extracted_text or ""
-
-        
-                
         else:
-            # No file_id or file_context provided - search Pinecone indexes for knowledge base files
-            use_pinecone_search = True
-            print(f"[ASK-QUESTION] No specific file provided, searching Pinecone knowledge base indexes...")
-        
-        # Build prompt with file context if available
-        if use_pinecone_search:
-            # Search across all Pinecone indexes for knowledge base files
-            kb_context_found = False
-            try:
-                knowledge_base_files = db.query(ProjectKnowledgeBaseFile).all()
-                
-                if knowledge_base_files:
-                    kb_file_ids = [kb_file.mandatory_file_id for kb_file in knowledge_base_files]
-                    all_mandatory_files = db.query(MandatoryFile).filter(
-                        MandatoryFile.id.in_(kb_file_ids),
-                        MandatoryFile.is_active == True,
-                        MandatoryFile.extracted_text.isnot(None),
-                        MandatoryFile.extracted_text != ""
-                    ).all()
-                    
-                    if all_mandatory_files:
-                        index_names = []
-                        file_info_map = {}
-                        existing_indexes = pinecone_service.list_indexes()
-                        
-                        for file in all_mandatory_files:
-                            index_name = pinecone_service.get_index_name_for_file(file.id, file.file_name)
-                            if index_name in existing_indexes:
-                                index_names.append(index_name)
-                                file_info_map[index_name] = {
-                                    "file_id": file.id,
-                                    "file_name": file.file_name
-                                }
-                        
-                        if index_names:
-                            print(f"[PINECONE] Searching across {len(index_names)} indexes: {[file_info_map[idx]['file_name'] for idx in index_names]}")
-                            
-                            query_embedding = embedding_service.embed_query(question)
-                            search_result = pinecone_service.search_across_indexes(
-                                query_embedding=query_embedding,
-                                index_names=index_names,
-                                top_k=3
-                            )
-                            
-                            if search_result.get("success") and search_result.get("results"):
-                                top_results = search_result["results"][:5]
-                                
-                                best_index = None
-                                best_score = 0.0
-                                for result in top_results:
-                                    if result["score"] > best_score:
-                                        best_score = result["score"]
-                                        best_index = result["index_name"]
-                                
-                                best_file_info = file_info_map.get(best_index, {})
-                                print(f"[PINECONE] Best match: {best_file_info.get('file_name', 'Unknown')} (score: {best_score:.3f})")
-                                
-                                chunk_texts = []
-                                for result in top_results:
-                                    metadata = result.get("metadata", {})
-                                    chunk_text = metadata.get("text", "")
-                                    file_name = metadata.get("file_name", "Unknown")
-                                    chunk_id = result.get("chunk_id", result.get("id", "?"))
-                                    score = result.get("score", 0.0)
-                                    
-                                    chunk_texts.append(f"[Chunk {chunk_id} from {file_name} (score: {score:.3f})]\n{chunk_text}")
-                                
-                                context_text = "\n\n---\n\n".join(chunk_texts)
-                                print(f"[PINECONE] Retrieved {len(top_results)} relevant chunks (best score: {best_score:.3f})")
-                                kb_context_found = True
-                            else:
-                                print(f"[PINECONE] No relevant results found in knowledge base.")
-                        else:
-                            print(f"[PINECONE] No Pinecone indexes found for knowledge base files.")
-                    else:
-                        print(f"[PINECONE] Mandatory files referenced by knowledge base are missing or empty.")
+            if file_context:
+                # Use provided file_context directly (e.g., from multiple mandatory files)
+                # This maintains backward compatibility for mandatory files
+                context_text = file_context
+                print(f"[ASK-QUESTION] Using provided file_context (PLAYBOOK/MANDATORY FILES)")
+                print(f"[ASK-QUESTION] Context length: {len(context_text)} characters")
+                if mandatory_file_ids:
+                    try:
+                        import json
+                        ids = json.loads(mandatory_file_ids)
+                        print(f"[ASK-QUESTION] Mandatory file IDs used: {ids}")
+                        # Fetch file names for these IDs
+                        if ids:
+                            mandatory_files = db.query(MandatoryFile).filter(MandatoryFile.id.in_(ids)).all()
+                            file_names = [f.file_name for f in mandatory_files]
+                            print(f"[ASK-QUESTION] Documents being used: {file_names}")
+                    except:
+                        print(f"[ASK-QUESTION] Mandatory file IDs (raw): {mandatory_file_ids}")
+                print(f"[ASK-QUESTION] Question: {question[:200]}...")
+
+            elif file_id:
+                uploaded_file = db.query(UploadedFile).filter(UploadedFile.id == file_id).first()
+                if not uploaded_file:
+                    return {
+                        "success": False,
+                        "error": f"File with ID {file_id} not found.",
+                        "chat_id": chat_id
+                    }
+                print(f"[ASK-QUESTION] Document being used: {uploaded_file.file_name} (ID: {file_id})")
+                print(f"[ASK-QUESTION] Querying Pinecone shared index for file_id {file_id}")
+                query_embedding = embedding_service.embed_query(question)
+                matches = pinecone_service.query_file_chunks(
+                query_embedding=query_embedding,
+                file_id=file_id,
+                top_k=5
+                )
+                # 3️⃣ Build context from Pinecone results
+                if matches:
+                    chunk_texts = []
+                    for match in matches:
+                        metadata = match.get("metadata", {})
+                        text = metadata.get("text", "")
+                        score = match.get("score", 0.0)
+                        chunk_texts.append(f"[Score: {score:.3f}]\n{text}")
+                    context_text = "\n\n---\n\n".join(chunk_texts)
+                    print(f"[ASK-QUESTION] Using Pinecone context ({len(matches)} chunks, length: {len(context_text)})")
                 else:
-                    print(f"[PINECONE] No files selected in knowledge base.")
+                    print("[ASK-QUESTION] No Pinecone matches found, falling back to full text")
+                    context_text = uploaded_file.extracted_text or ""
+
             
-            except Exception as e:
-                print(f"[PINECONE] Error searching Pinecone: {str(e)}")
-                import traceback
-                print(traceback.format_exc())
+                    
+            else:
+                # No file_id or file_context provided - search Pinecone indexes for knowledge base files
+                use_pinecone_search = True
+                print(f"[ASK-QUESTION] No specific file provided, searching Pinecone knowledge base indexes...")
+            
+            # Build prompt with file context if available
+            if use_pinecone_search:
+                # Search across all Pinecone indexes for knowledge base files
                 kb_context_found = False
-            
-            if not kb_context_found:
-                use_router_answerer = True
-                context_text = ""
-        elif use_router_answerer:
-            # Use ROUTER + ANSWERER system (Pinecone fallback across all indexes)
-            router_data = _search_across_all_files_and_route(question, top_k=10, db=db)
-            
-            if not router_data['file_scores'] or not router_data['context_chunks']:
-                # No results found, fallback to simple response
-                error_text = "No relevant documents found in the knowledge base. Please try rephrasing your question or upload relevant files."
-                _save_chat_message(db, chat_id, "assistant", error_text, user_email)
-                return {
-                    "success": False,
-                    "error": error_text,
-                    "chat_id": chat_id
-                }
-            
-            # Build the prompt for ROUTER + ANSWERER
-            user_prompt = f"""Process the following question using the provided file scores and context chunks.
+                try:
+                    knowledge_base_files = db.query(ProjectKnowledgeBaseFile).all()
+                    
+                    if knowledge_base_files:
+                        kb_file_ids = [kb_file.mandatory_file_id for kb_file in knowledge_base_files]
+                        all_mandatory_files = db.query(MandatoryFile).filter(
+                            MandatoryFile.id.in_(kb_file_ids),
+                            MandatoryFile.is_active == True,
+                            MandatoryFile.extracted_text.isnot(None),
+                            MandatoryFile.extracted_text != ""
+                        ).all()
+                        
+                        if all_mandatory_files:
+                            index_names = []
+                            file_info_map = {}
+                            existing_indexes = pinecone_service.list_indexes()
+                            
+                            for file in all_mandatory_files:
+                                index_name = pinecone_service.get_index_name_for_file(file.id, file.file_name)
+                                if index_name in existing_indexes:
+                                    index_names.append(index_name)
+                                    file_info_map[index_name] = {
+                                        "file_id": file.id,
+                                        "file_name": file.file_name
+                                    }
+                            
+                            if index_names:
+                                print(f"[PINECONE] Searching across {len(index_names)} indexes: {[file_info_map[idx]['file_name'] for idx in index_names]}")
+                                
+                                query_embedding = embedding_service.embed_query(question)
+                                search_result = pinecone_service.search_across_indexes(
+                                    query_embedding=query_embedding,
+                                    index_names=index_names,
+                                    top_k=3
+                                )
+                                
+                                if search_result.get("success") and search_result.get("results"):
+                                    top_results = search_result["results"][:5]
+                                    
+                                    best_index = None
+                                    best_score = 0.0
+                                    for result in top_results:
+                                        if result["score"] > best_score:
+                                            best_score = result["score"]
+                                            best_index = result["index_name"]
+                                    
+                                    best_file_info = file_info_map.get(best_index, {})
+                                    print(f"[PINECONE] Best match: {best_file_info.get('file_name', 'Unknown')} (score: {best_score:.3f})")
+                                    
+                                    chunk_texts = []
+                                    for result in top_results:
+                                        metadata = result.get("metadata", {})
+                                        chunk_text = metadata.get("text", "")
+                                        file_name = metadata.get("file_name", "Unknown")
+                                        chunk_id = result.get("chunk_id", result.get("id", "?"))
+                                        score = result.get("score", 0.0)
+                                        
+                                        chunk_texts.append(f"[Chunk {chunk_id} from {file_name} (score: {score:.3f})]\n{chunk_text}")
+                                    
+                                    context_text = "\n\n---\n\n".join(chunk_texts)
+                                    print(f"[PINECONE] Retrieved {len(top_results)} relevant chunks (best score: {best_score:.3f})")
+                                    kb_context_found = True
+                                else:
+                                    print(f"[PINECONE] No relevant results found in knowledge base.")
+                            else:
+                                print(f"[PINECONE] No Pinecone indexes found for knowledge base files.")
+                        else:
+                            print(f"[PINECONE] Mandatory files referenced by knowledge base are missing or empty.")
+                    else:
+                        print(f"[PINECONE] No files selected in knowledge base.")
+                
+                except Exception as e:
+                    print(f"[PINECONE] Error searching Pinecone: {str(e)}")
+                    import traceback
+                    print(traceback.format_exc())
+                    kb_context_found = False
+                
+                if not kb_context_found:
+                    use_router_answerer = True
+                    context_text = ""
+            if use_router_answerer:
+                # Use ROUTER + ANSWERER system (Pinecone fallback across all indexes)
+                router_data = _search_across_all_files_and_route(question, top_k=10, db=db)
+                
+                if not router_data['file_scores'] or not router_data['context_chunks']:
+                    # No results found, fallback to simple response
+                    error_text = "No relevant documents found in the knowledge base. Please try rephrasing your question or upload relevant files."
+                    _save_chat_message(db, chat_id, "assistant", error_text, user_email)
+                    return {
+                        "success": False,
+                        "error": error_text,
+                        "chat_id": chat_id
+                    }
+                
+                # Build the prompt for ROUTER + ANSWERER
+                user_prompt = f"""Process the following question using the provided file scores and context chunks.
 
-{{
-  "user_question": "{question}",
-  "file_scores": {json.dumps(router_data['file_scores'], indent=2)},
-  "context_chunks": {json.dumps(router_data['context_chunks'], indent=2)}
-}}
+    {{
+    "user_question": "{question}",
+    "file_scores": {json.dumps(router_data['file_scores'], indent=2)},
+    "context_chunks": {json.dumps(router_data['context_chunks'], indent=2)}
+    }}
 
-Return ONLY the JSON object matching the schema specified in your instructions."""
+    Return ONLY the JSON object matching the schema specified in your instructions."""
+                
+                # Send to Gemini with ROUTER + ANSWERER system prompt
+                messages = [
+                    {"role": "system", "content": _router_answerer_system_prompt()},
+                    {"role": "user", "content": user_prompt}
+                ]
+                
+                print(f"[ROUTER] Sending to LLM with {len(router_data['file_scores'])} files, {len(router_data['context_chunks'])} chunks")
+                result = await gemini_service.chat(messages, max_tokens=4000,user=user_email)
+                
+                if result['success']:
+                    llm_response = result.get('response', '')
+                    
+                    # Try to extract JSON from response (may be wrapped in markdown code blocks)
+                    import re
+                    json_match = re.search(r'\{[\s\S]*\}', llm_response)
+                    if json_match:
+                        json_str = json_match.group(0)
+                    else:
+                        json_str = llm_response
+                    
+                    try:
+                        router_result = json.loads(json_str)
+                        
+                        # Extract answer and format response
+                        answer_text = router_result.get('answer', '')
+                        status = router_result.get('status', 'OK')
+                        
+                        # Add sources section if available
+                        sources = router_result.get('sources', [])
+                        if sources:
+                            answer_text += "\n\n**Sources:**\n"
+                            for source in sources:
+                                answer_text += f"- {source.get('file_name', 'Unknown')} (chunk: {source.get('chunk_id', '?')}, score: {source.get('score', 0):.3f})\n"
+                        
+                        # Format as HTML for frontend
+                        formatted_answer = answer_text.replace('\n', '<br/>')
+                        
+                        print(f"[ROUTER] LLM response received, status: {status}")
+                        print(f"[ROUTER] Selected files: {router_result.get('selected_files', [])}")
+                        
+                        formatted_answer = formatted_answer or ""
+                        _save_chat_message(db, chat_id, "assistant", formatted_answer, user_email)
+                        return {
+                            "success": True,
+                            "answer": formatted_answer,
+                            "response": formatted_answer,
+                            "router_result": router_result,  # Include full router result for debugging
+                            "status": status,
+                            "chat_id": chat_id
+                        }
+                    except json.JSONDecodeError as e:
+                        print(f"[ROUTER] Failed to parse JSON response: {e}")
+                        print(f"[ROUTER] Raw response: {llm_response[:500]}")
+                        # Fallback: return the raw response
+                        cleaned_response = llm_response.replace('\n', '<br/>')
+                        _save_chat_message(db, chat_id, "assistant", cleaned_response, user_email)
+                        return {
+                            "success": True,
+                            "response": cleaned_response,
+                            "status": "OK",
+                            "chat_id": chat_id
+                        }
+                else:
+                    error_msg = result.get('error', 'Unknown error')
+                    print(f"[ROUTER] Gemini API error: {error_msg}")
+                    assistant_error = f"Gemini API error: {error_msg}"
+                    _save_chat_message(db, chat_id, "assistant", assistant_error, user_email)
+                    return {
+                        "success": False,
+                        "error": assistant_error,
+                        "chat_id": chat_id
+                    }
+            if context_text:
+                prompt = f"""You are a helpful project management assistant. Based on the following document content, please answer the user's question in a clear, structured, and concise manner.
+
+    DOCUMENT CONTENT:
+    {context_text}
+
+    USER QUESTION:
+    {question}
+
+    INSTRUCTIONS:
+    - Provide a well-structured answer based on the document content
+    - Use headings, bullet points, and clear formatting
+    - Focus on answering the user's specific question
+    - If the question cannot be answered using the document, clearly state that
+    - Do NOT simply repeat the document content - synthesize and summarize the relevant information
+    - When multiple documents are provided, consider information from all of them
+    - **CRITICAL: The document contains links in the format "link_text (url)" or "[Link: url]". You MUST preserve ALL external links from the source document in your response.**
+    - **When you mention any item that has a link in the source (like "Link to standard documentation/templates", "MOM Template", "RAID Log", "Project Plan", etc.), you MUST include the actual clickable HTML link in the format: <a href="url" target="_blank">link_text</a>**
+    - **If a link appears in the format "link_text (url)" in the document content where url starts with http:// or https://, convert it to: <a href="url" target="_blank">link_text</a> in your response**
+    - **If you see "[Link: url]" format in the document, convert it to: <a href="url" target="_blank">View Document</a> or <a href="url" target="_blank">Link</a>**
+    - **IMPORTANT: If a section mentions a link text (like "Link to sample design document") and you can find a URL in the document content (even if not directly next to the text), include that URL as a clickable link.**
+    - **Always scan the document content for any URLs (especially Google Sheets links like https://docs.google.com/spreadsheets/...) and include them as clickable links when they relate to the content being discussed.**
+    - **For links marked as internal (format: "link_text (#internal:...)"), you can skip including the URL but still mention the link text if relevant.**
+    - **Do NOT skip external links. If a section mentions a link with a valid URL, include that link in your response.**
+    - **Look for patterns like "Link to...", "...Template", "...Log", "...Plan" - these are likely link references that need to be included with their URLs if they have valid external URLs.**
+    - **For any Google Sheets or document links (URLs starting with http:// or https://), always include them as clickable links.**
+    - **Example 1: If you see "Link to standard documentation/templates (https://example.com/templates)" in the document, your response should include: <a href="https://example.com/templates" target="_blank">Link to standard documentation/templates</a>**
+    - **Example 2: If you see "Link to sample design document" and later find "https://docs.google.com/spreadsheets/d/1Gg4W2tmwaWqFQHpTqFxk3EVdWVuLKFrz/edit..." in the document, include: <a href="https://docs.google.com/spreadsheets/d/1Gg4W2tmwaWqFQHpTqFxk3EVdWVuLKFrz/edit..." target="_blank">Link to sample design document</a>**
+
+    Please provide your answer:"""
+            else:
+                # No context available, answer without document reference
+                prompt = question
             
-            # Send to Gemini with ROUTER + ANSWERER system prompt
+            # Debug: Log prompt length (but not the full content to avoid cluttering logs)
+            print(f"[ASK-QUESTION] Prompt length: {len(prompt)} characters")
+            print(f"[ASK-QUESTION] Question: {question[:100]}...")
+            
+            # Send to Gemini
             messages = [
-                {"role": "system", "content": _router_answerer_system_prompt()},
-                {"role": "user", "content": user_prompt}
+                {"role": "system", "content": _get_structured_html_system_prompt()},
+                {"role": "user", "content": prompt}
             ]
             
-            print(f"[ROUTER] Sending to LLM with {len(router_data['file_scores'])} files, {len(router_data['context_chunks'])} chunks")
-            result = gemini_service.chat(messages, max_tokens=4000)
+            result = await gemini_service.chat(messages, max_tokens=3000,user=user_email)
             
             if result['success']:
+                # Ensure we return the LLM response, not the file context
                 llm_response = result.get('response', '')
                 
-                # Try to extract JSON from response (may be wrapped in markdown code blocks)
-                import re
-                json_match = re.search(r'\{[\s\S]*\}', llm_response)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    json_str = llm_response
+                # Clean up markdown code blocks if present (Gemini sometimes wraps HTML in ```html blocks)
+                if llm_response and '```' in llm_response:
+                    import re
+                    # Remove opening code fences (```html, ```, etc.)
+                    llm_response = re.sub(r'```[a-zA-Z]*\s*\n?', '', llm_response)
+                    # Remove closing code fences
+                    llm_response = re.sub(r'```\s*\n?', '', llm_response)
+                    llm_response = llm_response.strip()
+                    print(f"[ASK-QUESTION] Cleaned markdown code blocks from response")
                 
-                try:
-                    router_result = json.loads(json_str)
-                    
-                    # Extract answer and format response
-                    answer_text = router_result.get('answer', '')
-                    status = router_result.get('status', 'OK')
-                    
-                    # Add sources section if available
-                    sources = router_result.get('sources', [])
-                    if sources:
-                        answer_text += "\n\n**Sources:**\n"
-                        for source in sources:
-                            answer_text += f"- {source.get('file_name', 'Unknown')} (chunk: {source.get('chunk_id', '?')}, score: {source.get('score', 0):.3f})\n"
-                    
-                    # Format as HTML for frontend
-                    formatted_answer = answer_text.replace('\n', '<br/>')
-                    
-                    print(f"[ROUTER] LLM response received, status: {status}")
-                    print(f"[ROUTER] Selected files: {router_result.get('selected_files', [])}")
-                    
-                    formatted_answer = formatted_answer or ""
-                    _save_chat_message(db, chat_id, "assistant", formatted_answer, user_email)
-                    return {
-                        "success": True,
-                        "answer": formatted_answer,
-                        "response": formatted_answer,
-                        "router_result": router_result,  # Include full router result for debugging
-                        "status": status,
-                        "chat_id": chat_id
-                    }
-                except json.JSONDecodeError as e:
-                    print(f"[ROUTER] Failed to parse JSON response: {e}")
-                    print(f"[ROUTER] Raw response: {llm_response[:500]}")
-                    # Fallback: return the raw response
-                    cleaned_response = llm_response.replace('\n', '<br/>')
-                    _save_chat_message(db, chat_id, "assistant", cleaned_response, user_email)
-                    return {
-                        "success": True,
-                        "response": cleaned_response,
-                        "status": "OK",
-                        "chat_id": chat_id
-                    }
+                # Debug: Log response length to ensure we're getting LLM output
+                print(f"[ASK-QUESTION] LLM Response length: {len(llm_response)} characters")
+                print(f"[ASK-QUESTION] LLM Response preview: {llm_response[:200]}...")
+                
+                # Ensure response is not empty
+                if not llm_response or not llm_response.strip():
+                    llm_response = "<p>I apologize, but I couldn't generate a response. Please try again.</p>"
+                    print(f"[ASK-QUESTION] Empty response detected, using fallback message")
+                
+                _save_chat_message(db, chat_id, "assistant", llm_response, user_email)
+                if question == 'I am a new Project Manager.Based on the Project Management Playbook, explain how to start and run a project.Cover project phases, PM responsibilities, and key deliverables concisely.':
+                    await redis.set(question, llm_response, ex=3600)  # Cache the response for 1 hour
+                    print(f"[ASK-QUESTION] Response cached in Redis for question")
+                return {
+                    "success": True,
+                    "answer": llm_response, 
+                    "response": llm_response,
+                    "file_id": file_id,
+                    "chat_id": chat_id
+                }
             else:
                 error_msg = result.get('error', 'Unknown error')
-                print(f"[ROUTER] Gemini API error: {error_msg}")
+                print(f"[ASK-QUESTION] Gemini API error: {error_msg}")
                 assistant_error = f"Gemini API error: {error_msg}"
                 _save_chat_message(db, chat_id, "assistant", assistant_error, user_email)
                 return {
                     "success": False,
                     "error": assistant_error,
+                    "answer": "",
+                    "response": result.get('response', 'Failed to get response'),
                     "chat_id": chat_id
                 }
-        elif context_text:
-            prompt = f"""You are a helpful project management assistant. Based on the following document content, please answer the user's question in a clear, structured, and concise manner.
-
-DOCUMENT CONTENT:
-{context_text}
-
-USER QUESTION:
-{question}
-
-INSTRUCTIONS:
-- Provide a well-structured answer based on the document content
-- Use headings, bullet points, and clear formatting
-- Focus on answering the user's specific question
-- If the question cannot be answered using the document, clearly state that
-- Do NOT simply repeat the document content - synthesize and summarize the relevant information
-- When multiple documents are provided, consider information from all of them
-- **CRITICAL: The document contains links in the format "link_text (url)" or "[Link: url]". You MUST preserve ALL external links from the source document in your response.**
-- **When you mention any item that has a link in the source (like "Link to standard documentation/templates", "MOM Template", "RAID Log", "Project Plan", etc.), you MUST include the actual clickable HTML link in the format: <a href="url" target="_blank">link_text</a>**
-- **If a link appears in the format "link_text (url)" in the document content where url starts with http:// or https://, convert it to: <a href="url" target="_blank">link_text</a> in your response**
-- **If you see "[Link: url]" format in the document, convert it to: <a href="url" target="_blank">View Document</a> or <a href="url" target="_blank">Link</a>**
-- **IMPORTANT: If a section mentions a link text (like "Link to sample design document") and you can find a URL in the document content (even if not directly next to the text), include that URL as a clickable link.**
-- **Always scan the document content for any URLs (especially Google Sheets links like https://docs.google.com/spreadsheets/...) and include them as clickable links when they relate to the content being discussed.**
-- **For links marked as internal (format: "link_text (#internal:...)"), you can skip including the URL but still mention the link text if relevant.**
-- **Do NOT skip external links. If a section mentions a link with a valid URL, include that link in your response.**
-- **Look for patterns like "Link to...", "...Template", "...Log", "...Plan" - these are likely link references that need to be included with their URLs if they have valid external URLs.**
-- **For any Google Sheets or document links (URLs starting with http:// or https://), always include them as clickable links.**
-- **Example 1: If you see "Link to standard documentation/templates (https://example.com/templates)" in the document, your response should include: <a href="https://example.com/templates" target="_blank">Link to standard documentation/templates</a>**
-- **Example 2: If you see "Link to sample design document" and later find "https://docs.google.com/spreadsheets/d/1Gg4W2tmwaWqFQHpTqFxk3EVdWVuLKFrz/edit..." in the document, include: <a href="https://docs.google.com/spreadsheets/d/1Gg4W2tmwaWqFQHpTqFxk3EVdWVuLKFrz/edit..." target="_blank">Link to sample design document</a>**
-
-Please provide your answer:"""
-        else:
-            # No context available, answer without document reference
-            prompt = question
-        
-        # Debug: Log prompt length (but not the full content to avoid cluttering logs)
-        print(f"[ASK-QUESTION] Prompt length: {len(prompt)} characters")
-        print(f"[ASK-QUESTION] Question: {question[:100]}...")
-        
-        # Send to Gemini
-        messages = [
-            {"role": "system", "content": _get_structured_html_system_prompt()},
-            {"role": "user", "content": prompt}
-        ]
-        
-        result = gemini_service.chat(messages, max_tokens=3000)
-        
-        if result['success']:
-            # Ensure we return the LLM response, not the file context
-            llm_response = result.get('response', '')
-            
-            # Clean up markdown code blocks if present (Gemini sometimes wraps HTML in ```html blocks)
-            if llm_response and '```' in llm_response:
-                import re
-                # Remove opening code fences (```html, ```, etc.)
-                llm_response = re.sub(r'```[a-zA-Z]*\s*\n?', '', llm_response)
-                # Remove closing code fences
-                llm_response = re.sub(r'```\s*\n?', '', llm_response)
-                llm_response = llm_response.strip()
-                print(f"[ASK-QUESTION] Cleaned markdown code blocks from response")
-            
-            # Debug: Log response length to ensure we're getting LLM output
-            print(f"[ASK-QUESTION] LLM Response length: {len(llm_response)} characters")
-            print(f"[ASK-QUESTION] LLM Response preview: {llm_response[:200]}...")
-            
-            # Ensure response is not empty
-            if not llm_response or not llm_response.strip():
-                llm_response = "<p>I apologize, but I couldn't generate a response. Please try again.</p>"
-                print(f"[ASK-QUESTION] Empty response detected, using fallback message")
-            
-            _save_chat_message(db, chat_id, "assistant", llm_response, user_email)
-            return {
-                "success": True,
-                "answer": llm_response, 
-                "response": llm_response,
-                "file_id": file_id,
-                "chat_id": chat_id
-            }
-        else:
-            error_msg = result.get('error', 'Unknown error')
-            print(f"[ASK-QUESTION] Gemini API error: {error_msg}")
-            assistant_error = f"Gemini API error: {error_msg}"
-            _save_chat_message(db, chat_id, "assistant", assistant_error, user_email)
-            return {
-                "success": False,
-                "error": assistant_error,
-                "answer": "",
-                "response": result.get('response', 'Failed to get response'),
-                "chat_id": chat_id
-            }
             
     except Exception as e:
         error_message = f"Error processing question: {str(e)}"
@@ -3419,7 +3434,8 @@ async def delete_workspace(
         ADMIN_EMAILS = [
             "shaik.sharuk@forsysinc.com",
             "archana.machanpally@forsysinc.com",
-            "sowjanya.pilla@forsysinc.com"
+            "sowjanya.pilla@forsysinc.com",
+            "nihal.yemula@forsysinc.com",
             # Add more admin emails here as needed
         ]
         

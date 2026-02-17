@@ -8,7 +8,6 @@ import json
 import logging
 import pandas as pd
 import google.generativeai as genai
-
 from config.settings import GEMINI_API_KEY, GEMINI_MODEL_NAME
 from utils.file_utils import normalize_value_for_rule
 
@@ -83,11 +82,12 @@ def apply_validation_rules(df: pd.DataFrame, rules: list) -> tuple:
     return good, bad
 
 
-def generate_validation_rules(
+async def generate_validation_rules(
     headers: list,
     sample_rows: list,
     user_guidance: dict = None,
-    previous_rules: dict = None
+    previous_rules: dict = None,
+    user: str = None
 ) -> list:
     """
     Generate or refine validation rules using Gemini SDK
@@ -176,9 +176,27 @@ User edits:
 """
 
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(prompt)
+        from services.gemini_token_service import gemini_token_service
+        Redis_Key_Meta,Redis_Key =  await gemini_token_service._get_available_api_key(user)
+        if Redis_Key:
+            try:
+                genai.configure(api_key=Redis_Key)
+                model = genai.GenerativeModel("gemini-2.5-flash")
+                logger.info(f"✅ Gemini configured with model with Redis Key: gemini-2.5-flash")
+            except Exception as e:
+                model = None
+                logger.error(f"❌ Failed to configure Gemini: {e}")
+        else:
+            model = None
+            logger.warning("⚠️ GEMINI_API_KEY not set — LLM calls will use hybrid fallback")
+        # model = genai.GenerativeModel("gemini-2.5-flash")
+        logger.info(f"✅ Gemini model Sending Propmt with Redis Key: gemini-2.5-flash")
+        response =  model.generate_content(prompt)
+        logger.info(f"✅ Response received model with Redis Key: gemini-2.5-flash")
         text = response.text.strip()
+        logger.info(f"✅ Gemini response with Redis Key: {Redis_Key} and user: {user}")
+        await gemini_token_service._release_key(Redis_Key_Meta)
+        await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
 
         # Extract JSON content
         match = re.search(r"\[[\s\S]*\]", text)

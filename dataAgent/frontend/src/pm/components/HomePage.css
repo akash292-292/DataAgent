@@ -5867,7 +5867,7 @@ iframe[id^="picker"],
   top: 12px;
   left: 0;
   right: 0;
-  width: 100%;
+  width: 97.5%;
   z-index: 100000;
   display: flex;
   justify-content: space-between;

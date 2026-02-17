@@ -2,6 +2,10 @@ import os
 import requests
 import json
 from typing import List, Dict, Any
+from core.redis import redis
+import time
+from fastapi.concurrency import run_in_threadpool
+
 
 class GeminiService:
     def __init__(self):
@@ -32,27 +36,127 @@ class GeminiService:
             raise ValueError("At least one GEMINI_API_KEY environment variable is required. Please set GEMINI_API_KEY_1, GEMINI_API_KEY_2, or GEMINI_API_KEY_3 in your .env file.")
         
         # Track current API key index and usage
-        self.current_key_index = 0
-        self.current_api_key = self.api_keys[0]
         self.model = "gemini-2.5-flash"
         self.base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
 
 
         
         print(f"🔑 [GEMINI SERVICE] Initialized with {len(self.api_keys)} API key(s)")
-        print(f"🔑 [GEMINI SERVICE] Using API key #{self.current_key_index + 1}")
-        
-    def _switch_to_next_api_key(self):
-        """Switch to the next available API key"""
-        if self.current_key_index < len(self.api_keys) - 1:
-            self.current_key_index += 1
-            self.current_api_key = self.api_keys[self.current_key_index]
-            print(f"🔄 [GEMINI SERVICE] Switched to API key #{self.current_key_index + 1}")
-            return True
-        else:
-            print(f"❌ [GEMINI SERVICE] All API keys exhausted. No more fallback options.")
-            return False
+        # print(f"🔑 [GEMINI SERVICE] Using API key #{self.current_key_index + 1}")
     
+    async def seed_gemini_keys(self,redis):
+        keys = [
+            os.getenv("GEMINI_API_KEY_1"),
+            os.getenv("GEMINI_API_KEY_2"),
+            os.getenv("GEMINI_API_KEY_3"),
+        ]
+
+        keys = [k for k in keys if k]
+
+        for idx, api_key in enumerate(keys, start=1):
+            key_id = f"key{idx}"
+            redis_key = f"gemini:key:{key_id}"
+
+            exists = await redis.exists(redis_key)
+            if exists:
+                continue
+
+            await redis.hset(
+                redis_key,
+                mapping={
+                    "api_key": api_key,
+                    "in_use": 0,
+                    "cooldown_until": 0,
+                    "successful_hits": 0,
+                    "last_used": 0,
+                    "user":""
+
+                }
+            )
+
+            await redis.sadd("gemini:keys", key_id)
+
+        print(f"✅ Seeded {len(keys)} Gemini c keys into Redis")
+           
+        
+    async def _get_available_api_key(self, user: str = None) -> tuple[str, str]:
+        now = int(time.time())
+        candidates = []
+
+        # First: check if user already has a key assigned
+        for raw_id in await redis.smembers("gemini:keys"):
+            key_id = raw_id
+            redis_key = f"gemini:key:{key_id}"
+            data = await redis.hgetall(redis_key)
+
+            if not data:
+                continue
+
+            # If this key belongs to this user
+            if data.get("user") == user:
+                hits = int(data.get("successful_hits", 0))
+
+                # If user hasn't exhausted 5 hits → reuse this key
+                if hits <= 5:
+                    await redis.hset(redis_key, "in_use", 1)
+                    return key_id, data["api_key"]
+
+                # If exhausted → unassign user
+                await redis.hset(redis_key, mapping={
+                    "user": "",
+                    "successful_hits": 0,
+                    "cooldown_until": int(time.time()) + 60,
+
+                })
+
+        # Second: find a free key
+        for raw_id in await redis.smembers("gemini:keys"):
+            key_id = raw_id  # Already a string since decode_responses=True
+            redis_key = f"gemini:key:{key_id}"
+
+            data = await redis.hgetall(redis_key)
+            if not data:
+                continue
+            if int(data.get("in_use", 0)) == 1:
+                continue
+            if int(data.get("cooldown_until", 0)) > now:
+                continue
+            
+            hits = int(data.get("successful_hits", 0))
+            last_used = int(data.get("last_used", 0))
+            candidates.append((hits, last_used, key_id, data["api_key"]))
+
+        if not candidates:
+            raise RuntimeError("No available Gemini API keys")
+            # least hits, then least recently used
+        candidates.sort(key=lambda x: (x[0], x[1]))
+        print(f"Candidates: {candidates}")
+
+        _, _, key_id, api_key = candidates[0]
+
+        await redis.hset(
+            f"gemini:key:{key_id}",
+            mapping={
+                "in_use": 1,
+                "last_used": now,
+            },
+        )
+        return key_id, api_key  # Already a string since decode_responses=True
+
+
+    async def _release_key(self, key_id: str):
+        await redis.hset(f"gemini:key:{key_id}", "in_use", 0)
+        
+    async def _set_success_hit(self, key_id: str, user: str):
+        await redis.hincrby(f"gemini:key:{key_id}", "successful_hits", 1)
+        await redis.hset(
+        f"gemini:key:{key_id}",
+        mapping={
+        "last_used": int(time.time()),
+        "user" : user
+        }                   
+        )    
+
     def _is_rate_limit_error(self, response):
         """Check if the response indicates a rate limit error"""
         if response.status_code == 429:  # Too Many Requests
@@ -74,131 +178,104 @@ class GeminiService:
             return any(indicator in error_message for indicator in rate_limit_indicators)
         except:
             return False
-    
-    def _make_api_request(self, headers, data):
-        """Make API request with automatic fallback on rate limits"""
-        max_retries = len(self.api_keys)
+ 
         
+    async def _make_api_request(self, data, max_retries=3,user: str = None):
+        print("USER VALUE:", user, type(user))
+        last_error = None
+
         for attempt in range(max_retries):
-            try:
-                print(f"🌐 [GEMINI SERVICE] Making request with API key #{self.current_key_index + 1} (attempt {attempt + 1})")
-                
-                response = requests.post(self.base_url, headers=headers, json=data)
-                
-                # Check if request was successful
-                if response.status_code == 200:
-                    print(f"✅ [GEMINI SERVICE] Request successful with API key #{self.current_key_index + 1}")
-                    return response, None
-                
-                # Check if it's a rate limit error
-                if self._is_rate_limit_error(response):
-                    print(f"⚠️ [GEMINI SERVICE] Rate limit hit with API key #{self.current_key_index + 1}")
-                    
-                    # Try to switch to next API key
-                    if self._switch_to_next_api_key():
-                        # Update headers with new API key
-                        headers["X-goog-api-key"] = self.current_api_key
-                        continue
-                    else:
-                        # No more API keys available
-                        error_msg = f"All API keys have reached their limits. Last error: {response.text}"
-                        return None, error_msg
-                else:
-                    # Non-rate-limit error
-                    error_msg = f"API error (status {response.status_code}): {response.text}"
-                    return None, error_msg
-                    
-            except requests.exceptions.RequestException as e:
-                print(f"❌ [GEMINI SERVICE] Request exception with API key #{self.current_key_index + 1}: {str(e)}")
-                
-                # Try to switch to next API key for network issues
-                if self._switch_to_next_api_key():
-                    headers["X-goog-api-key"] = self.current_api_key
-                    continue
-                else:
-                    return None, f"Network error: {str(e)}"
-        
-        return None, "Maximum retry attempts exceeded"
-        
-    def chat(self, messages: List[Dict[str, str]], max_tokens: int = 3000) -> Dict[str, Any]:
-        """Send messages to Gemini API and get response with fallback support"""
-        try:
+            key_id, api_key = await self._get_available_api_key(user=user)
+
             headers = {
                 "Content-Type": "application/json",
-                "X-goog-api-key": self.current_api_key
+                "X-goog-api-key": api_key,
             }
-            
-            # Convert OpenAI format messages to Gemini format
-            contents = []
-            for msg in messages:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                
-                if role == "system":
-                    # For system messages, prepend to user message or handle separately
+
+            try:
+                print(f"🌐 Using {key_id} (attempt {attempt + 1})")
+
+                response = await run_in_threadpool(
+                    requests.post,
+                    self.base_url,
+                    headers=headers,
+                    json=data,
+                )
+
+                if response.status_code == 200:
+                    await redis.hincrby(
+                    f"gemini:key:{key_id}", "successful_hits", 1)
+                    print("USER VALUE:", user, type(user))
+                    await redis.hset(
+                    f"gemini:key:{key_id}",
+                    mapping={
+                    "last_used": int(time.time()),
+                    "user" : user
+                    }                   
+                    )
+                    return response, None, key_id
+
+                if self._is_rate_limit_error(response):
+                    print(f"⚠️ Rate limit hit on {key_id}")
+                    await redis.hset(
+                        f"gemini:key:{key_id}",
+                        mapping={
+                            "last_used": int(time.time()),
+                            "cooldown_until": int(time.time()) + 60,
+                        }
+                    )
+                    last_error = "Rate limited"
                     continue
-                elif role == "user":
-                    contents.append({
-                        "parts": [{"text": content}]
-                    })
-                elif role == "assistant":
-                    # Gemini doesn't have assistant role in the same way, so we'll include it as context
-                    contents.append({
-                        "parts": [{"text": f"Assistant: {content}"}]
-                    })
-            
-            # If we have system message, prepend it to the first user message
-            if messages and messages[0].get("role") == "system":
-                system_content = messages[0].get("content", "")
-                if contents:
-                    contents[0]["parts"][0]["text"] = f"{system_content}\n\n{contents[0]['parts'][0]['text']}"
-            
-            data = {
-                "contents": contents
-            }
-            
-            # Make API request with fallback support
-            response, error = self._make_api_request(headers, data)
-            
+
+                return None, f"API error {response.status_code}: {response.text}", key_id
+
+            except requests.RequestException as e:
+                last_error = str(e)
+
+            finally:
+                await self._release_key(key_id)
+
+        return None, f"Retries exhausted: {last_error}", None
+
+    async def chat(self,messages: List[Dict[str, str]],max_tokens: int = 3000,user: str = None) -> Dict[str, Any]:
+        try:
+            contents = []
+            print("USER VALUE:", user, type(user))
+            for msg in messages:
+                if msg.get("role") == "user":
+                    contents.append({"parts": [{"text": msg["content"]}]})
+                elif msg.get("role") == "assistant":
+                    contents.append({"parts": [{"text": f"Assistant: {msg['content']}"}]})
+
+            if messages and messages[0].get("role") == "system" and contents:
+                contents[0]["parts"][0]["text"] = (
+                    messages[0]["content"] + "\n\n" + contents[0]["parts"][0]["text"]
+                )
+
+            data = {"contents": contents}
+
+            response, error, key_id = await self._make_api_request(data, user=user)
+
             if error:
-                return {
-                    "success": False,
-                    "response": f"Gemini API error: {error}",
-                    "error": error
-                }
-            
+                return {"success": False, "error": error}
+
             result = response.json()
-            
-            # Extract content from Gemini response
-            if "candidates" in result and result["candidates"]:
-                content = result["candidates"][0]["content"]["parts"][0]["text"]
-            else:
-                content = "No response generated"
-            
-            print(f"Gemini Response Type: {type(content)}")
-            print(f"Gemini Response Content: {content[:200]}...")
-            
-            # Ensure we return a string, not an object
-            if isinstance(content, dict):
-                # If Gemini returns a JSON object, convert it to a formatted string
-                content = json.dumps(content, indent=2)
-            elif not isinstance(content, str):
-                content = str(content)
-            
+            content = (
+                result["candidates"][0]["content"]["parts"][0]["text"]
+                if result.get("candidates")
+                else "No response generated"
+            )
+
             return {
                 "success": True,
                 "response": content,
+                "api_key_used": key_id,
                 "usage": result.get("usage", {}),
-                "api_key_used": f"#{self.current_key_index + 1}"
             }
-            
+
         except Exception as e:
-            return {
-                "success": False,
-                "response": f"Unexpected error: {str(e)}",
-                "error": str(e)
-            }
-    
+            return {"success": False, "error": str(e)}
+
     def generate_sprint_plan(self, conversation_history: List[Dict[str, str]], prompt_data: str = None) -> Dict[str, Any]:
         """Generate a comprehensive sprint plan based on conversation history"""
         try:
