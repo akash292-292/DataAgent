@@ -15,12 +15,19 @@ import PMHomePage from "./pm/components/HomePage";
 import PMProjectsPage from "./pm/components/ProjectsPage";
 import PMGoogleCallback from "./pm/components/GoogleCallback";
 import PMEmailLoginCallback from "./pm/components/EmailLoginCallback";
+import QALandingPage from "./qa/QALandingPage";
+import RequirementAnalysis from "./qa/RequirementAnalysis";
+import TestCaseAnalysis from "./qa/TestCaseAnalysis";
+// import MetadataComparison from "./pages/MetadataComparison";
+// import MetadataComparisonDetail from "./pages/MetadataComparisonDetail";
 import { AuthProvider as PMAuthProvider } from "./pm/contexts/AuthContext";
+// import { MappingSessionProvider } from "./contexts/MappingSessionContext";
 
 
 function App() {
   return (
     <>
+      {/* <MappingSessionProvider> */}
       <PMAuthProvider>
         <Routes>
           <Route path="/" element={<HomePage />} />
@@ -40,9 +47,17 @@ function App() {
           <Route path="/email-login" element={<PMEmailLoginCallback />} />
           <Route path="/home" element={<PMHomePage />} />
           <Route path="/projects" element={<PMProjectsPage />} />
+
+          <Route path="/qa" element={<QALandingPage />} />
+          <Route path="/qa/requirements" element={<RequirementAnalysis />} />
+          <Route path="/qa/testcases" element={<TestCaseAnalysis />} />
+
+          {/* <Route path="/metadata-comparison" element={<MetadataComparison />} />
+          <Route path="/metadata-comparison/configure" element={<MetadataComparisonDetail />} />  */}
         </Routes>
       </PMAuthProvider>
       <HomeButton />
+      {/* </MappingSessionProvider> */}
     </>
 
   );

@@ -112,6 +112,8 @@ const HomePage = () => {
         navigate("/dashboard");
         break;
       case 1:
+        navigate("/qa");
+        break;
       case 2:
         break;
       case 3:
@@ -344,7 +346,7 @@ const HomePage = () => {
         >
           {cards.map((card, idx) => {
             const isHovered = hoveredCard === idx;
-            const isDisabledComingSoon = idx === 1 || idx === 2;
+            const isDisabledComingSoon = idx === 2;
             const isClickable = isSignedIn && !isDisabledComingSoon;
 
             return (

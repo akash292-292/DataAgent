@@ -12,7 +12,10 @@ const HomeButton = ({ email, position = 'absolute' }) => {
     location.pathname === "/home" ||
     location.pathname === "/projects" ||
     location.pathname === "/callback" ||
-    location.pathname === "/email-login"
+    location.pathname === "/email-login"||
+    location.pathname === "/qa"||
+    location.pathname === "/qa/requirements"|| 
+    location.pathname === "/qa/testcases"
   ) {
     return null;
   }
