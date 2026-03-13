@@ -195,6 +195,8 @@ const QAWorkspace = ({ title, helperText, mode }) => {
 
         if (uploadedFile) {
           formData.append("file", uploadedFile);
+          const email = localStorage.getItem("user_email");
+          if (email) formData.append("email", email);
         } else if (driveFileId) {
           formData.append("file_id", driveFileId);
           if (fileName) formData.append("drive_filename", fileName);
@@ -217,6 +219,8 @@ const QAWorkspace = ({ title, helperText, mode }) => {
 
         if (uploadedFile) {
           formData.append("file", uploadedFile);
+          const email = localStorage.getItem("user_email");
+          if (email) formData.append("email", email);
         } else if (driveFileId) {
           formData.append("file_id", driveFileId);
           if (fileName) formData.append("drive_filename", fileName);

@@ -158,15 +158,17 @@ const Dashboard = () => {
           onClick={() => navigate("/mapping/optionsMapping")}
         >
           <div className="bubble-icon">🗺️</div>
-          <div className="bubble-title">Data Mapping</div>
+          <div className="bubble-title">Smart Mapping</div>
           <div className="bubble-desc">Transform data between formats</div>
         </div>
 
-        <div className="bubble disabled">
-          <div className="coming-soon">Coming Soon</div>
+        <div
+          className="bubble primary"
+          onClick={() => navigate("/metadata-comparison")}
+        >
           <div className="bubble-icon">✅</div>
-          <div className="bubble-title">Data Validation</div>
-          <div className="bubble-desc">Verify data quality and integrity</div>
+          <div className="bubble-title">Data Mapping</div>
+          <div className="bubble-desc">Compare metadata of both source and target systems</div>
         </div>
 
         <div className="bubble disabled">

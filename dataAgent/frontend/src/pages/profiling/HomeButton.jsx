@@ -5,22 +5,13 @@ const HomeButton = ({ email, position = 'absolute' }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
+
   if (
-    location.pathname === "/" ||
-    location.pathname === "/dashboard" ||
-    location.pathname === "/pm" ||
-    location.pathname === "/home" ||
-    location.pathname === "/projects" ||
-    location.pathname === "/callback" ||
-    location.pathname === "/email-login"||
-    location.pathname === "/qa"||
-    location.pathname === "/qa/requirements"|| 
-    location.pathname === "/qa/testcases"
+    location.pathname.startsWith("/mapping/") ||
+    location.pathname.startsWith("/profiling/")
   ) {
-    return null;
-  }
-  return (
-    <div 
+    return (
+      <div 
       style={{
         position : 'fixed',
         top: "50px",               
@@ -45,6 +36,8 @@ const HomeButton = ({ email, position = 'absolute' }) => {
       <i className="fas fa-home"></i>
     </div>
   );
+  }
+  return null;
 };
 
 export default HomeButton;

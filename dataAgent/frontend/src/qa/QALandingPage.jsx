@@ -56,11 +56,9 @@ const QALandingPage = () => {
           gap: 30
         }}>
           
-          {/* Requirement Analysis */}
-          <div
-            onClick={() => navigate("/qa/requirements")}
-            style={bubbleStyle}
-          >
+          {/* Requirement Analysis — disabled */}
+          <div style={disabledBubbleStyle}>
+            <div style={comingSoonBadge}>Coming Soon</div>
             <div style={{ fontSize: 40 }}>📄</div>
             <h3>Requirement Analysis</h3>
             <p>Extract functional & non-functional requirements</p>
@@ -90,6 +88,25 @@ const bubbleStyle = {
   textAlign: "center",
   boxShadow: "0 6px 16px rgba(0,0,0,0.12)",
   transition: "transform 0.2s",
+};
+
+const disabledBubbleStyle = {
+  ...bubbleStyle,
+  opacity: 0.6,
+  cursor: "not-allowed",
+  position: "relative",
+};
+
+const comingSoonBadge = {
+  position: "absolute",
+  top: 10,
+  right: 10,
+  background: "rgba(0,0,0,0.08)",
+  color: "#5a6c8d",
+  padding: "4px 8px",
+  borderRadius: 12,
+  fontSize: "0.7rem",
+  fontWeight: 600,
 };
 
 export default QALandingPage;

@@ -75,10 +75,11 @@ async def analyze_document(
         if file and file.filename:
             raw = await file.read()
             logger.info("Received uploaded file: %s (%d bytes)", file.filename, len(raw))
-            return analyze_requirements_from_bytes(
+            return await analyze_requirements_from_bytes(
                 filename=file.filename,
                 content=raw,
                 user_prompt=user_prompt,
+                user=email,
             )
 
         # ── 2. Google Drive file ──────────────────────────────────────────
@@ -94,18 +95,19 @@ async def analyze_document(
 
             # Use drive_filename for native dispatch if provided; else fall back to text
             if drive_filename:
-                return analyze_requirements_from_bytes(
+                return await analyze_requirements_from_bytes(
                     filename=drive_filename,
                     content=raw,
                     user_prompt=user_prompt,
+                    user=email,
                 )
             # No filename → UTF-8 text fallback
             text = raw.decode("utf-8", errors="ignore")
-            return analyze_requirements(text, user_prompt=user_prompt)
+            return await analyze_requirements(text, user_prompt=user_prompt, user=email)
 
         # ── 3. Plain text fallback ────────────────────────────────────────
         if document_text and document_text.strip():
-            return analyze_requirements(document_text.strip(), user_prompt=user_prompt)
+            return await analyze_requirements(document_text.strip(), user_prompt=user_prompt, user=email)
 
         raise HTTPException(
             status_code=400,

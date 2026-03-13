@@ -77,10 +77,11 @@ async def generate(
         if file and file.filename:
             raw = await file.read()
             logger.info("Received uploaded file: %s (%d bytes)", file.filename, len(raw))
-            return generate_test_cases_from_bytes(
+            return await generate_test_cases_from_bytes(
                 filename=file.filename,
                 content=raw,
                 focus_query=focus,
+                user=email,
             )
 
         # ── 2. Google Drive file ──────────────────────────────────────────
@@ -96,13 +97,14 @@ async def generate(
 
             # Use drive_filename for native dispatch if provided; else UTF-8 text fallback
             if drive_filename:
-                return generate_test_cases_from_bytes(
+                return await generate_test_cases_from_bytes(
                     filename=drive_filename,
                     content=raw,
                     focus_query=focus,
+                    user=email,
                 )
             text = raw.decode("utf-8", errors="ignore")
-            return generate_test_cases(document_content=text, focus_query=focus)
+            return await generate_test_cases(document_content=text, focus_query=focus, user=email)
 
         # ── Validate: document is mandatory ──────────────────────────────
         raise HTTPException(

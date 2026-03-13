@@ -22,6 +22,7 @@ import time
 from typing import List, Optional, Tuple
 
 import google.generativeai as genai
+from services.gemini_token_service import gemini_token_service
 
 logger = logging.getLogger(__name__)
 
@@ -196,12 +197,27 @@ def _extract_docx_parts(content: bytes) -> Tuple[str, List[Tuple[str, bytes]]]:
 # --------------------------------------------------
 # Lazy model init — does NOT raise at import time
 # --------------------------------------------------
-def _get_model() -> genai.GenerativeModel:
-    key = os.getenv("GEMINI_API_KEY", "").strip()
-    if not key:
+async def _get_model( user: Optional[str] = None):
+    Redis_Key_Meta,Redis_Key =  await gemini_token_service._get_available_api_key(user)
+    GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+    if Redis_Key:
+            try:
+                genai.configure(api_key=Redis_Key)
+                logger.info(f"✅ Gemini configured with Redis Key: {Redis_Key}")
+            except Exception as e:
+                model = None
+                logger.error(f"❌ Failed to configure Gemini: {e}")
+    elif GEMINI_KEY:
+        try:
+            genai.configure(api_key=GEMINI_KEY)
+            logger.info(f"✅ Gemini configured with model with GEMINI_KEY: {GEMINI_KEY[:4]}***")
+        except Exception as e:
+            model = None
+            logger.error(f"❌ Failed to configure Gemini: {e}")
+            logger.warning("⚠️ GEMINI_API_KEY not set — LLM calls will use hybrid fallback")
+    else:
         raise RuntimeError("GEMINI_API_KEY environment variable not set")
-    genai.configure(api_key=key)
-    return genai.GenerativeModel(MODEL_NAME)
+    return genai.GenerativeModel(MODEL_NAME),Redis_Key_Meta
 
 
 # --------------------------------------------------
@@ -353,23 +369,26 @@ Previous Analysis:
 # --------------------------------------------------
 # Service Functions
 # --------------------------------------------------
-def analyze_requirements(document_text: str, user_prompt: Optional[str] = None) -> dict:
+async def analyze_requirements(document_text: str, user_prompt: Optional[str] = None,  user: Optional[str] = None) -> dict:
     """Text-only path — kept for backward compatibility."""
     logger.info(
         "analyze_requirements (text path): %d chars, focus_query=%s",
         len(document_text), bool(user_prompt),
     )
-    model = _get_model()
+    model, Redis_Key_Meta = await _get_model(user=user)
     prompt = build_analysis_prompt(document_text, query=user_prompt)
     response = model.generate_content(prompt)
     logger.info("Requirement analysis complete: %d chars in response", len(response.text))
+    await gemini_token_service._release_key(Redis_Key_Meta)
+    await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
     return {"model": MODEL_NAME, "analysis": response.text}
 
 
-def analyze_requirements_from_bytes(
+async def analyze_requirements_from_bytes(
     filename: str,
     content: bytes,
     user_prompt: Optional[str] = None,
+    user: Optional[str] = None
 ) -> dict:
     """
     Dispatch by file extension:
@@ -377,7 +396,7 @@ def analyze_requirements_from_bytes(
       • DOCX → text + inline embedded images
       • TXT / other → plain text embedded in prompt
     """
-    model = _get_model()
+    model, Redis_Key_Meta = await _get_model(user=user)
     ext = filename.lower().rsplit(".", 1)[-1]
     logger.info(
         "analyze_requirements_from_bytes: filename=%s ext=%s size=%d bytes focus_query=%s",
@@ -391,6 +410,8 @@ def analyze_requirements_from_bytes(
             prompt = build_analysis_prompt_native(query=user_prompt)
             response = model.generate_content([file_ref, prompt])
             logger.info("PDF analysis complete: %d chars in response", len(response.text))
+            await gemini_token_service._release_key(Redis_Key_Meta)
+            await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
         finally:
             try:
                 genai.delete_file(file_ref.name)
@@ -407,6 +428,8 @@ def analyze_requirements_from_bytes(
         logger.info("Sending %d parts to Gemini (text + %d images)", len(parts), len(images))
         response = model.generate_content(parts)
         logger.info("DOCX analysis complete: %d chars in response", len(response.text))
+        await gemini_token_service._release_key(Redis_Key_Meta)
+        await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
 
     elif ext == "csv":
         logger.info("CSV path → native Gemini Files API upload (text/csv)")
@@ -415,6 +438,8 @@ def analyze_requirements_from_bytes(
             prompt = build_analysis_prompt_native(query=user_prompt)
             response = model.generate_content([file_ref, prompt])
             logger.info("CSV analysis complete: %d chars in response", len(response.text))
+            await gemini_token_service._release_key(Redis_Key_Meta)
+            await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
         finally:
             try:
                 genai.delete_file(file_ref.name)
@@ -425,7 +450,7 @@ def analyze_requirements_from_bytes(
     else:
         logger.info("Fallback text path for extension '%s'", ext)
         text = content.decode("utf-8", errors="ignore")
-        return analyze_requirements(text, user_prompt=user_prompt)
+        return await analyze_requirements(text, user_prompt=user_prompt,user=user)
 
     return {"model": MODEL_NAME, "analysis": response.text}
 
