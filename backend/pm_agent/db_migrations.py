@@ -443,6 +443,69 @@ def run_migrations():
                     logger.error(f"[MIGRATION] Failed to backfill conversations: {str(e)}")
                     conn.rollback()
             
+            # Migration 10: Create governance_projects table (clean schema without phase columns)
+            if table_exists(conn, 'governance_projects'):
+                # If stale schema (has 'phase' column from old design), drop and recreate
+                try:
+                    result = conn.execute(text("""
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'governance_projects' AND column_name = 'phase'
+                    """))
+                    if result.fetchone():
+                        logger.info("[MIGRATION] governance_projects has stale columns — dropping to recreate")
+                        conn.execute(text("DROP TABLE IF EXISTS governance_project_phases CASCADE"))
+                        conn.execute(text("DROP TABLE IF EXISTS governance_projects CASCADE"))
+                        conn.commit()
+                except Exception as e:
+                    logger.warning(f"[MIGRATION] Could not check governance_projects columns: {e}")
+
+            if not table_exists(conn, 'governance_projects'):
+                try:
+                    conn.execute(text("""
+                        CREATE TABLE governance_projects (
+                            id VARCHAR PRIMARY KEY,
+                            user_email VARCHAR NOT NULL,
+                            project_name VARCHAR NOT NULL,
+                            project_type VARCHAR NOT NULL,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS idx_governance_projects_user_email ON governance_projects(user_email)"))
+                    conn.commit()
+                    migrations_applied.append("Created governance_projects table")
+                    logger.info("[MIGRATION] Created governance_projects table")
+                except Exception as e:
+                    logger.error(f"[MIGRATION] Failed to create governance_projects table: {str(e)}")
+                    conn.rollback()
+            else:
+                logger.info("[MIGRATION] Table governance_projects already exists")
+
+            # Migration 11: Create governance_project_phases table
+            if not table_exists(conn, 'governance_project_phases'):
+                try:
+                    conn.execute(text("""
+                        CREATE TABLE governance_project_phases (
+                            id VARCHAR PRIMARY KEY,
+                            project_id VARCHAR NOT NULL REFERENCES governance_projects(id) ON DELETE CASCADE,
+                            phase VARCHAR,
+                            status VARCHAR,
+                            planned_date VARCHAR,
+                            document_link TEXT,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """))
+                    conn.execute(text("CREATE INDEX IF NOT EXISTS idx_governance_phases_project_id ON governance_project_phases(project_id)"))
+                    conn.commit()
+                    migrations_applied.append("Created governance_project_phases table")
+                    logger.info("[MIGRATION] Created governance_project_phases table")
+                except Exception as e:
+                    logger.error(f"[MIGRATION] Failed to create governance_project_phases table: {str(e)}")
+                    conn.rollback()
+            else:
+                logger.info("[MIGRATION] Table governance_project_phases already exists")
+
             if migrations_applied:
                 logger.info(f"[MIGRATION] Applied {len(migrations_applied)} migration(s): {', '.join(migrations_applied)}")
                 return True

@@ -22,6 +22,7 @@ import MetadataComparison from "./pages/MetadataComparison";
 import MetadataComparisonDetail from "./pages/MetadataComparisonDetail";
 import { AuthProvider as PMAuthProvider } from "./pm/contexts/AuthContext";
 import { MappingSessionProvider } from "./contexts/MappingSessionContext";
+import Governance from "./pages/governance";
 
 
 function App() {
@@ -54,6 +55,8 @@ function App() {
 
           <Route path="/metadata-comparison" element={<MetadataComparison />} />
           <Route path="/metadata-comparison/configure" element={<MetadataComparisonDetail />} /> 
+
+          <Route path="/governance" element={<Governance />} />
         </Routes>
       </PMAuthProvider>
       <HomeButton />

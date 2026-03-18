@@ -28,6 +28,7 @@ from api import qa_requirement_routes
 from api import qa_testcase_routes
 from api import qa_excel_routes
 from api import metadata_routes
+from api import governance_routes
 
 
 # -------------------------------------------------
@@ -107,6 +108,7 @@ app.include_router(qa_requirement_routes.router)
 app.include_router(qa_testcase_routes.router)
 app.include_router(qa_excel_routes.router)
 app.include_router(metadata_routes.router)
+app.include_router(governance_routes.router)
 
 
 async def mount_pm_portal_if_available(main_app: FastAPI):

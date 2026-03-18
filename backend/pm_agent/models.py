@@ -216,3 +216,31 @@ class UserUploadedFile(Base):
     is_active = Column(Boolean, default=True)
 
 
+class GovernanceProject(Base):
+    __tablename__ = "governance_projects"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_email = Column(String, index=True, nullable=False)
+    project_name = Column(String, nullable=False)
+    project_type = Column(String, nullable=False)  # DI or DM
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class GovernanceProjectPhase(Base):
+    __tablename__ = "governance_project_phases"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    project_id = Column(String, ForeignKey("governance_projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    phase = Column(String, nullable=True)
+    subphase = Column(String, nullable=True)
+    gate_check = Column(String, nullable=True)
+    status = Column(String, nullable=True)
+    comments = Column(Text, nullable=True)
+    planned_date = Column(String, nullable=True)
+    actual_date = Column(String, nullable=True)
+    document_link = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+

@@ -171,11 +171,10 @@ const Dashboard = () => {
           <div className="bubble-desc">Compare metadata of both source and target systems</div>
         </div>
 
-        <div className="bubble disabled">
-          <div className="coming-soon">Coming Soon</div>
-          <div className="bubble-icon">⚖️</div>
-          <div className="bubble-title">Reconciliation</div>
-          <div className="bubble-desc">Match and compare data sets</div>
+        <div className="bubble primary" onClick={() => navigate("/governance")}>
+          <div className="bubble-icon">📋</div>
+          <div className="bubble-title">Data Project Governance</div>
+          <div className="bubble-desc">Manage and govern data migration or integration projects</div>
         </div>
       </div>
 
