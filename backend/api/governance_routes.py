@@ -28,10 +28,6 @@ _PM_AGENT_PATH = Path(__file__).parent.parent / "pm_agent"
 from dotenv import load_dotenv
 load_dotenv(_PM_AGENT_PATH / ".env")
 
-_PM_AGENT_DIR = str(_PM_AGENT_PATH)
-if _PM_AGENT_DIR not in sys.path:
-    sys.path.insert(0, _PM_AGENT_DIR)
-
 try:
     from pm_agent.models import SessionLocal, GovernanceProject, GovernanceProjectPhase, Base, engine  # type: ignore[import-untyped]
 except Exception as _import_err:
