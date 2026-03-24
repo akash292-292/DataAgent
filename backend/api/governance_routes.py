@@ -19,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from openpyxl import load_workbook
 from openpyxl.styles import Font
+import os
 
 # Resolve pm_agent models from the sibling directory
 _PM_AGENT_PATH = Path(__file__).parent.parent / "pm_agent"
@@ -68,6 +69,16 @@ except Exception as _e:
 _TEMPLATES_DIR = Path(__file__).parent.parent.parent / "dataAgent" / "frontend" / "public" / "templates"
 
 router = APIRouter(tags=["Governance"], prefix="/api/governance")
+
+# Super admin emails from env (comma-separated)
+_SUPER_ADMINS = {
+    e.strip().lower()
+    for e in os.getenv("GOVERNANCE_SUPER_ADMINS", "").split(",")
+    if e.strip()
+}
+
+def _is_super_admin(email: str) -> bool:
+    return email.strip().lower() in _SUPER_ADMINS
 
 
 def get_db():
@@ -389,14 +400,26 @@ def get_template_picklists(project_type: str):
 
 # ─── Project endpoints ────────────────────────────────────────────────────────
 
+@router.get("/is-super-admin")
+def check_super_admin(email: str = Query(...)):
+    return {"is_super_admin": _is_super_admin(email)}
+
+
 @router.get("/projects")
 def list_projects(email: str = Query(...), db: Session = Depends(get_db)):
-    projects = (
-        db.query(GovernanceProject)
-        .filter(GovernanceProject.user_email == email)
-        .order_by(GovernanceProject.created_at.desc())
-        .all()
-    )
+    if _is_super_admin(email):
+        projects = (
+            db.query(GovernanceProject)
+            .order_by(GovernanceProject.created_at.desc())
+            .all()
+        )
+    else:
+        projects = (
+            db.query(GovernanceProject)
+            .filter(GovernanceProject.user_email == email)
+            .order_by(GovernanceProject.created_at.desc())
+            .all()
+        )
     return [project_to_dict(p) for p in projects]
 
 

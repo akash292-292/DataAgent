@@ -22,8 +22,9 @@ const Governance = () => {
   const navigate = useNavigate();
   const userEmail = localStorage.getItem("user_email") || "";
 
-  // view: 'list' | 'create' | 'edit'
+  // view: 'list' | 'create' | 'edit' | 'view'
   const [view, setView] = useState("list");
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
 
   // List state
   const [projects, setProjects] = useState([]);
@@ -51,7 +52,20 @@ const Governance = () => {
   const [picklistsLoading, setPicklistsLoading] = useState(false);
   const [tooltipKey, setTooltipKey] = useState(null);
 
-  // ── Fetch projects ───────────────────────────────────────────────────────
+  // ── Check super admin + fetch projects ──────────────────────────────────
+  useEffect(() => {
+    const checkAdmin = async () => {
+      try {
+        const res = await fetch(`${BASE_URL}/api/governance/is-super-admin?email=${encodeURIComponent(userEmail)}`, { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          setIsSuperAdmin(data.is_super_admin);
+        }
+      } catch (_) {}
+    };
+    checkAdmin();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (view === "list") fetchProjects();
   }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -127,6 +141,33 @@ const Governance = () => {
       } else {
         setPhaseRows([newRow()]);
       }
+    } catch (err) {
+      setEditError(err.message);
+    } finally {
+      setPicklistsLoading(false);
+    }
+  };
+
+  const openView = async (project) => {
+    setEditProject(project);
+    setEditType(project.project_type);
+    setEditName(project.project_name);
+    setEditError("");
+    setPhaseRows([newRow()]);
+    setPicklists(EMPTY_PICKLISTS);
+    setPicklistsLoading(true);
+    setView("view");
+
+    try {
+      const [phasesRes, picklistsRes] = await Promise.all([
+        fetch(`${BASE_URL}/api/governance/projects/${project.id}/phases`, { credentials: "include" }),
+        fetch(`${BASE_URL}/api/governance/templates/${project.project_type}/picklists`, { credentials: "include" }),
+      ]);
+      if (!phasesRes.ok) throw new Error("Failed to load phases.");
+      const data = await phasesRes.json();
+      const pl = picklistsRes.ok ? await picklistsRes.json() : EMPTY_PICKLISTS;
+      if (picklistsRes.ok) setPicklists(pl);
+      setPhaseRows(data.length > 0 ? data.map((p) => ({ ...p, _key: p.id })) : [newRow()]);
     } catch (err) {
       setEditError(err.message);
     } finally {
@@ -301,6 +342,7 @@ const Governance = () => {
                     <th style={{ ...s.th, width: 40 }}>#</th>
                     <th style={s.th}>Project Type</th>
                     <th style={s.th}>Project Name</th>
+                    {isSuperAdmin && <th style={s.th}>Created By</th>}
                     <th style={{ ...s.th, textAlign: "center" }}>Actions</th>
                   </tr>
                 </thead>
@@ -317,11 +359,20 @@ const Governance = () => {
                         </span>
                       </td>
                       <td style={{ ...s.td, fontWeight: 600 }}>{p.project_name}</td>
+                      {isSuperAdmin && (
+                        <td style={{ ...s.td, color: "#5a6c8d", fontSize: "0.85rem" }}>{p.user_email}</td>
+                      )}
                       <td style={{ ...s.td, textAlign: "center" }}>
                         <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
-                          <button onClick={() => openEdit(p)} style={s.actionBtnBlue} title="Edit project and phases">
-                            <i className="fas fa-edit" style={{ marginRight: 5 }} />Edit
-                          </button>
+                          {isSuperAdmin ? (
+                            <button onClick={() => openView(p)} style={s.actionBtnBlue} title="View project phases">
+                              <i className="fas fa-eye" style={{ marginRight: 5 }} />View
+                            </button>
+                          ) : (
+                            <button onClick={() => openEdit(p)} style={s.actionBtnBlue} title="Edit project and phases">
+                              <i className="fas fa-edit" style={{ marginRight: 5 }} />Edit
+                            </button>
+                          )}
                           <button onClick={() => handleDownload(p)} style={s.actionBtnGhost} title="Download filled template">
                             <i className="fas fa-download" style={{ marginRight: 5 }} />Local
                           </button>
@@ -428,8 +479,9 @@ const Governance = () => {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // SCREEN 3 — Edit Project (phase records table)
+  // SCREEN 3 — Edit Project (phase records table)  /  SCREEN 4 — View (read-only)
   // ════════════════════════════════════════════════════════════════════════════
+  const isViewOnly = view === "view";
   const cellSelect = (value, onChange, options, placeholder, disabled = false) => (
     <select
       value={value}
@@ -472,20 +524,21 @@ const Governance = () => {
           <h1 style={s.title}>{editType || "—"} - {editName || "—"}</h1>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          {/* {configuredCount > 0 && (
-            <span style={s.configuredBadge}>
-              <i className="fas fa-check-circle" style={{ marginRight: 6 }} />
-              {configuredCount} phase{configuredCount !== 1 ? "s" : ""} configured
+          {isViewOnly ? (
+            <span style={s.viewOnlyBadge}>
+              <i className="fas fa-eye" style={{ marginRight: 6 }} />
+              View Only
             </span>
-          )} */}
-          <button
-            onClick={handleSaveEdit}
-            disabled={isSavingEdit}
-            style={{ ...s.saveBtn, ...(isSavingEdit ? s.saveBtnDisabled : {}) }}
-          >
-            <i className="fas fa-save" style={{ marginRight: 8 }} />
-            {isSavingEdit ? "Saving..." : "Save Project"}
-          </button>
+          ) : (
+            <button
+              onClick={handleSaveEdit}
+              disabled={isSavingEdit}
+              style={{ ...s.saveBtn, ...(isSavingEdit ? s.saveBtnDisabled : {}) }}
+            >
+              <i className="fas fa-save" style={{ marginRight: 8 }} />
+              {isSavingEdit ? "Saving..." : "Save Project"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -507,10 +560,12 @@ const Governance = () => {
               </span>
             )}
           </div>
-          <button onClick={addRow} style={s.addRowBtn}>
-            <i className="fas fa-plus" style={{ marginRight: 6 }} />
-            Add Record
-          </button>
+          {!isViewOnly && (
+            <button onClick={addRow} style={s.addRowBtn}>
+              <i className="fas fa-plus" style={{ marginRight: 6 }} />
+              Add Record
+            </button>
+          )}
         </div>
 
         <div style={{ flex: 1, overflowX: "auto", overflowY: "auto" }}>
@@ -525,7 +580,7 @@ const Governance = () => {
                 <th style={{ ...s.th, minWidth: 160 }}>Planned Date</th>
                 <th style={{ ...s.th, minWidth: 160 }}>Actual Date</th>
                 <th style={{ ...s.th, minWidth: 180 }}>Document Link</th>
-                <th style={{ ...s.th, width: 44, textAlign: "center" }}></th>
+                {!isViewOnly && <th style={{ ...s.th, width: 44, textAlign: "center" }}></th>}
               </tr>
             </thead>
             <tbody>
@@ -539,7 +594,8 @@ const Governance = () => {
                       row.phase,
                       (v) => setPhaseRows((rows) => rows.map((r) => r._key === row._key ? { ...r, phase: v, subphase: "", gate_check: "" } : r)),
                       picklists.phases,
-                      "Select phase..."
+                      "Select phase...",
+                      isViewOnly
                     )}
                   </td>
                   <td style={s.td}>
@@ -575,7 +631,7 @@ const Governance = () => {
                     </div>
                   </td>
                   <td style={s.td}>
-                    {cellSelect(row.status, (v) => updateRow(row._key, "status", v), picklists.statuses, "Select status...")}
+                    {cellSelect(row.status, (v) => updateRow(row._key, "status", v), picklists.statuses, "Select status...", isViewOnly)}
                   </td>
                   <td style={s.td}>
                     <input
@@ -594,7 +650,8 @@ const Governance = () => {
                       type="date"
                       value={row.planned_date || ""}
                       onChange={(e) => updateRow(row._key, "planned_date", e.target.value)}
-                      style={s.cellInput}
+                      disabled={isViewOnly}
+                      style={{ ...s.cellInput, ...(isViewOnly ? { backgroundColor: "#f0f2f8", cursor: "not-allowed" } : {}) }}
                       onFocus={(e) => (e.target.style.borderColor = "#1453c6")}
                       onBlur={(e) => (e.target.style.borderColor = "#d0d9f0")}
                     />
@@ -604,7 +661,8 @@ const Governance = () => {
                       type="date"
                       value={row.actual_date || ""}
                       onChange={(e) => updateRow(row._key, "actual_date", e.target.value)}
-                      style={s.cellInput}
+                      disabled={isViewOnly}
+                      style={{ ...s.cellInput, ...(isViewOnly ? { backgroundColor: "#f0f2f8", cursor: "not-allowed" } : {}) }}
                       onFocus={(e) => (e.target.style.borderColor = "#1453c6")}
                       onBlur={(e) => (e.target.style.borderColor = "#d0d9f0")}
                     />
@@ -615,16 +673,19 @@ const Governance = () => {
                       value={row.document_link || ""}
                       onChange={(e) => updateRow(row._key, "document_link", e.target.value)}
                       placeholder="https://..."
-                      style={s.cellInput}
+                      disabled={isViewOnly}
+                      style={{ ...s.cellInput, ...(isViewOnly ? { backgroundColor: "#f0f2f8", cursor: "not-allowed" } : {}) }}
                       onFocus={(e) => (e.target.style.borderColor = "#1453c6")}
                       onBlur={(e) => (e.target.style.borderColor = "#d0d9f0")}
                     />
                   </td>
-                  <td style={{ ...s.td, textAlign: "center" }}>
-                    <button onClick={() => deleteRow(row._key)} title="Remove row" style={s.removeRowBtn}>
-                      <i className="fas fa-times" />
-                    </button>
-                  </td>
+                  {!isViewOnly && (
+                    <td style={{ ...s.td, textAlign: "center" }}>
+                      <button onClick={() => deleteRow(row._key)} title="Remove row" style={s.removeRowBtn}>
+                        <i className="fas fa-times" />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -1032,6 +1093,18 @@ const s = {
     background: "#c8d3ea",
     boxShadow: "none",
     cursor: "not-allowed",
+  },
+  viewOnlyBadge: {
+    display: "flex",
+    alignItems: "center",
+    background: "#eaf0ff",
+    color: "#1453c6",
+    border: "1px solid #c5d4f7",
+    borderRadius: 20,
+    padding: "6px 14px",
+    fontSize: "0.85rem",
+    fontWeight: 600,
+    whiteSpace: "nowrap",
   },
   cancelBtn: {
     background: "white",
