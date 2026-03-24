@@ -31,25 +31,38 @@ _PM_AGENT_DIR = str(_PM_AGENT_PATH)
 if _PM_AGENT_DIR not in sys.path:
     sys.path.insert(0, _PM_AGENT_DIR)
 
-from models import SessionLocal, GovernanceProject, GovernanceProjectPhase, Base, engine  # type: ignore[import-untyped]
+try:
+    from pm_agent.models import SessionLocal, GovernanceProject, GovernanceProjectPhase, Base, engine  # type: ignore[import-untyped]
+except Exception as _import_err:
+    raise RuntimeError(
+        f"governance_routes: failed to import pm_agent models. "
+        f"Ensure DATABASE_URL is set and pm_agent/.env exists. Error: {_import_err}"
+    ) from _import_err
+
 from services.gdrive_service import upload_bytes_to_folder, create_shareable_link
 
+logger = logging.getLogger(__name__)
+
 # Ensure tables exist on startup
-Base.metadata.create_all(
-    bind=engine,
-    tables=[GovernanceProject.__table__, GovernanceProjectPhase.__table__]
-)
+try:
+    Base.metadata.create_all(
+        bind=engine,
+        tables=[GovernanceProject.__table__, GovernanceProjectPhase.__table__]
+    )
+except Exception as _e:
+    logger.warning("governance_routes: could not run create_all on startup: %s", _e)
 
 # Add new columns to existing tables if they don't exist yet
-with engine.connect() as _conn:
-    for _col, _type in [("subphase", "VARCHAR"), ("gate_check", "VARCHAR"), ("comments", "TEXT"), ("actual_date", "VARCHAR")]:
-        try:
-            _conn.execute(text(f"ALTER TABLE governance_project_phases ADD COLUMN {_col} {_type}"))
-            _conn.commit()
-        except Exception:
-            _conn.rollback()
-
-logger = logging.getLogger(__name__)
+try:
+    with engine.connect() as _conn:
+        for _col, _type in [("subphase", "VARCHAR"), ("gate_check", "VARCHAR"), ("comments", "TEXT"), ("actual_date", "VARCHAR")]:
+            try:
+                _conn.execute(text(f"ALTER TABLE governance_project_phases ADD COLUMN {_col} {_type}"))
+                _conn.commit()
+            except Exception:
+                _conn.rollback()
+except Exception as _e:
+    logger.warning("governance_routes: could not run column migrations on startup: %s", _e)
 
 # Templates live in the frontend's public/templates folder
 _TEMPLATES_DIR = Path(__file__).parent.parent.parent / "dataAgent" / "frontend" / "public" / "templates"
@@ -64,6 +77,19 @@ def get_db():
     finally:
         db.close()
 
+
+
+
+# Test trigger endpoint (for manual testing only)
+@router.post("/test-overdue-check")
+def trigger_overdue_check():
+    """Manually trigger the overdue check — for testing only."""
+    try:
+        from api.governance_scheduler import check_overdue_phases
+        check_overdue_phases()
+        return {"status": "ok", "message": "Overdue check ran. Check server logs and your inbox."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 # ─── Pydantic Schemas ─────────────────────────────────────────────────────────
 

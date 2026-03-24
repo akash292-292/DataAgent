@@ -29,6 +29,13 @@ from api import qa_testcase_routes
 from api import qa_excel_routes
 from api import metadata_routes
 from api import governance_routes
+try:
+    from api.governance_scheduler import start_scheduler, stop_scheduler
+    _scheduler_available = True
+except ImportError:
+    _scheduler_available = False
+    import logging as _logging
+    _logging.getLogger(__name__).warning("APScheduler not installed — governance overdue alerts disabled.")
 
 
 # -------------------------------------------------
@@ -222,6 +229,14 @@ async def mount_pm_portal_if_available(main_app: FastAPI):
 async def startup_event():
     """Initialize PM backend on app startup"""
     await mount_pm_portal_if_available(app)
+    if _scheduler_available:
+        start_scheduler()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    if _scheduler_available:
+        stop_scheduler()
 
 
 # -------------------------------------------------
