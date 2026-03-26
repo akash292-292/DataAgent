@@ -670,7 +670,8 @@ const Governance = () => {
                       onChange={(e) => updateRow(row._key, "comments", e.target.value)}
                       placeholder="Add comments..."
                       maxLength={500}
-                      style={s.cellInput}
+                      disabled={isViewOnly}
+                      style={{ ...s.cellInput, ...(isViewOnly ? { backgroundColor: "#f0f2f8", cursor: "not-allowed" } : {}) }}
                       onFocus={(e) => (e.target.style.borderColor = "#1453c6")}
                       onBlur={(e) => (e.target.style.borderColor = "#d0d9f0")}
                     />
