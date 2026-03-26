@@ -167,7 +167,13 @@ const Governance = () => {
       const data = await phasesRes.json();
       const pl = picklistsRes.ok ? await picklistsRes.json() : EMPTY_PICKLISTS;
       if (picklistsRes.ok) setPicklists(pl);
-      setPhaseRows(data.length > 0 ? data.map((p) => ({ ...p, _key: p.id })) : [newRow()]);
+      if (data.length > 0) {
+        setPhaseRows(data.map((p) => ({ ...p, _key: p.id })));
+      } else if (pl.template_rows?.length > 0) {
+        setPhaseRows(pl.template_rows.map((r) => ({ ...newRow(), phase: r.phase, subphase: r.subphase, gate_check: r.gate_check })));
+      } else {
+        setPhaseRows([newRow()]);
+      }
     } catch (err) {
       setEditError(err.message);
     } finally {
@@ -629,7 +635,7 @@ const Governance = () => {
                         (v) => setPhaseRows((rows) => rows.map((r) => r._key === row._key ? { ...r, subphase: v, gate_check: "" } : r)),
                         row.phase ? (picklists.subphases_by_phase[row.phase] || []) : [],
                         "Select sub-phase...",
-                        !row.phase
+                        isViewOnly || !row.phase
                       )}
                       {row.subphase && row.gate_check && (
                         <div
