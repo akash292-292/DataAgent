@@ -516,11 +516,10 @@ def download_filled_template(project_id: str, email: str = Query(...), db: Sessi
     Opens the governance template for the project's type, fills in the phase data
     from the DB, and streams the filled workbook as an xlsx download.
     """
-    project = (
-        db.query(GovernanceProject)
-        .filter(GovernanceProject.id == project_id, GovernanceProject.user_email == email)
-        .first()
-    )
+    query = db.query(GovernanceProject).filter(GovernanceProject.id == project_id)
+    if not _is_super_admin(email):
+        query = query.filter(GovernanceProject.user_email == email)
+    project = query.first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
 
@@ -552,11 +551,10 @@ def upload_to_drive(project_id: str, email: str = Query(...), db: Session = Depe
     Builds the filled workbook (same as /download) and uploads it to the user's
     Google Drive. Returns a shareable link.
     """
-    project = (
-        db.query(GovernanceProject)
-        .filter(GovernanceProject.id == project_id, GovernanceProject.user_email == email)
-        .first()
-    )
+    query = db.query(GovernanceProject).filter(GovernanceProject.id == project_id)
+    if not _is_super_admin(email):
+        query = query.filter(GovernanceProject.user_email == email)
+    project = query.first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
 

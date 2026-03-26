@@ -364,36 +364,60 @@ const Governance = () => {
                       )}
                       <td style={{ ...s.td, textAlign: "center" }}>
                         <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
-                          {isSuperAdmin ? (
-                            <button onClick={() => openView(p)} style={s.actionBtnBlue} title="View project phases">
-                              <i className="fas fa-eye" style={{ marginRight: 5 }} />View
-                            </button>
+                          {isSuperAdmin && p.user_email !== userEmail ? (
+                            /* Other user's project — view + download */
+                            <>
+                              <button onClick={() => openView(p)} style={s.actionBtnBlue} title="View project phases">
+                                <i className="fas fa-eye" style={{ marginRight: 5 }} />View
+                              </button>
+                              <button onClick={() => handleDownload(p)} style={s.actionBtnGhost} title="Download filled template">
+                                <i className="fas fa-download" style={{ marginRight: 5 }} />Local
+                              </button>
+                              <button
+                                onClick={() => handleUploadToDrive(p)}
+                                disabled={driveLoading[p.id]}
+                                style={{ ...s.actionBtnGreen, opacity: driveLoading[p.id] ? 0.7 : 1 }}
+                                title="Save filled template to Google Drive"
+                              >
+                                <i className={`fas ${driveLoading[p.id] ? "fa-spinner fa-spin" : "fa-cloud-upload-alt"}`} style={{ marginRight: 5 }} />
+                                {driveLoading[p.id] ? "Uploading..." : "Save to Drive"}
+                              </button>
+                              {driveLinks[p.id] && (
+                                <a href={driveLinks[p.id]} target="_blank" rel="noopener noreferrer" style={s.driveLink}>
+                                  <i className="fas fa-external-link-alt" style={{ marginRight: 4, fontSize: "0.75rem" }} />
+                                  Open in Drive
+                                </a>
+                              )}
+                            </>
                           ) : (
-                            <button onClick={() => openEdit(p)} style={s.actionBtnBlue} title="Edit project and phases">
-                              <i className="fas fa-edit" style={{ marginRight: 5 }} />Edit
-                            </button>
+                            /* Own project (or normal user) — full access */
+                            <>
+                              <button onClick={() => openEdit(p)} style={s.actionBtnBlue} title="Edit project and phases">
+                                <i className="fas fa-edit" style={{ marginRight: 5 }} />Edit
+                              </button>
+                              <button onClick={() => handleDownload(p)} style={s.actionBtnGhost} title="Download filled template">
+                                <i className="fas fa-download" style={{ marginRight: 5 }} />Local
+                              </button>
+                              <button
+                                onClick={() => handleUploadToDrive(p)}
+                                disabled={driveLoading[p.id]}
+                                style={{ ...s.actionBtnGreen, opacity: driveLoading[p.id] ? 0.7 : 1 }}
+                                title="Save filled template to Google Drive"
+                              >
+                                <i className={`fas ${driveLoading[p.id] ? "fa-spinner fa-spin" : "fa-cloud-upload-alt"}`} style={{ marginRight: 5 }} />
+                                {driveLoading[p.id] ? "Uploading..." : "Save to Drive"}
+                              </button>
+                              {driveLinks[p.id] && (
+                                <a href={driveLinks[p.id]} target="_blank" rel="noopener noreferrer" style={s.driveLink}>
+                                  <i className="fas fa-external-link-alt" style={{ marginRight: 4, fontSize: "0.75rem" }} />
+                                  Open in Drive
+                                </a>
+                              )}
+                              <button onClick={() => handleDelete(p.id)} style={s.actionBtnRed} title="Delete project">
+                                <i className="fas fa-trash" style={{ marginRight: 5 }} />Delete
+                              </button>
+                            </>
                           )}
-                          <button onClick={() => handleDownload(p)} style={s.actionBtnGhost} title="Download filled template">
-                            <i className="fas fa-download" style={{ marginRight: 5 }} />Local
-                          </button>
-                          <button
-                            onClick={() => handleUploadToDrive(p)}
-                            disabled={driveLoading[p.id]}
-                            style={{ ...s.actionBtnGreen, opacity: driveLoading[p.id] ? 0.7 : 1 }}
-                            title="Save filled template to Google Drive"
-                          >
-                            <i className={`fas ${driveLoading[p.id] ? "fa-spinner fa-spin" : "fa-cloud-upload-alt"}`} style={{ marginRight: 5 }} />
-                            {driveLoading[p.id] ? "Uploading..." : "Save to Drive"}
-                          </button>
-                          {driveLinks[p.id] && (
-                            <a href={driveLinks[p.id]} target="_blank" rel="noopener noreferrer" style={s.driveLink}>
-                              <i className="fas fa-external-link-alt" style={{ marginRight: 4, fontSize: "0.75rem" }} />
-                              Open in Drive
-                            </a>
-                          )}
-                          <button onClick={() => handleDelete(p.id)} style={s.actionBtnRed} title="Delete project">
-                            <i className="fas fa-trash" style={{ marginRight: 5 }} />Delete
-                          </button>
                         </div>
                       </td>
                     </tr>
