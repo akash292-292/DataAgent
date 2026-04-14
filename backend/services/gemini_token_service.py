@@ -37,30 +37,28 @@ class GeminiTokenService:
     async def seed_gemini_keys(self, redis):
         keys = self.api_keys
 
+        # Delete all existing gemini keys to clear stale schema fields
+        existing_key_ids = await redis.smembers("gemini:keys")
+        if existing_key_ids:
+            stale_redis_keys = [f"gemini:key:{kid}" for kid in existing_key_ids]
+            await redis.delete(*stale_redis_keys)
+            await redis.delete("gemini:keys")
+            logger.info(f"[GEMINI SERVICE] Cleared {len(existing_key_ids)} existing Gemini keys from Redis")
+
+        # Seed all keys fresh with new schema
         for idx, api_key in enumerate(keys, start=1):
             key_id = f"key{idx}"
             redis_key = f"gemini:key:{key_id}"
 
-            exists = await redis.exists(redis_key)
-
-            if exists:
-                # Key exists — clear stale runtime state, preserve daily count
-                await redis.hset(redis_key, mapping={
-                    "cooldown_until": 0,
-                    "rpm_count": 0,
-                    "rpm_window": 0,
-                })
-            else:
-                # New key — seed fresh
-                await redis.hset(redis_key, mapping={
-                    "api_key": api_key,
-                    "cooldown_until": 0,
-                    "rpm_count": 0,
-                    "rpm_window": 0,
-                    "rpd_count": 0,
-                    "rpd_window": 0,
-                })
-                await redis.sadd("gemini:keys", key_id)
+            await redis.hset(redis_key, mapping={
+                "api_key": api_key,
+                "cooldown_until": 0,
+                "rpm_count": 0,
+                "rpm_window": 0,
+                "rpd_count": 0,
+                "rpd_window": 0,
+            })
+            await redis.sadd("gemini:keys", key_id)
 
         logger.info(f"[GEMINI SERVICE] Seeded {len(keys)} Gemini keys into Redis")
 
