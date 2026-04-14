@@ -506,6 +506,20 @@ def run_migrations():
             else:
                 logger.info("[MIGRATION] Table governance_project_phases already exists")
 
+            # Migration 12: Add drive_file_id to mandatory_files
+            if not column_exists(conn, 'mandatory_files', 'drive_file_id'):
+                try:
+                    conn.execute(text("""
+                        ALTER TABLE mandatory_files
+                        ADD COLUMN drive_file_id VARCHAR
+                    """))
+                    conn.commit()
+                    migrations_applied.append("Added drive_file_id to mandatory_files")
+                    logger.info("[MIGRATION] Added drive_file_id column to mandatory_files table")
+                except Exception as e:
+                    logger.error(f"[MIGRATION] Failed to add drive_file_id to mandatory_files: {str(e)}")
+                    conn.rollback()
+
             if migrations_applied:
                 logger.info(f"[MIGRATION] Applied {len(migrations_applied)} migration(s): {', '.join(migrations_applied)}")
                 return True

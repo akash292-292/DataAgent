@@ -147,6 +147,7 @@ class MandatoryFile(Base):
     description = Column(String)  # Optional description
     is_active = Column(Boolean, default=True)  # For soft delete
     extracted_text = Column(Text)  # Extracted text content from the file (for search/indexing)
+    drive_file_id = Column(String, nullable=True)  # Google Drive file ID if uploaded from Drive
 
 class ProjectKnowledgeBaseFile(Base):
     __tablename__ = "project_knowledge_base_files"
@@ -223,6 +224,7 @@ class GovernanceProject(Base):
     user_email = Column(String, index=True, nullable=False)
     project_name = Column(String, nullable=False)
     project_type = Column(String, nullable=False)  # DI or DM
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

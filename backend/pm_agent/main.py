@@ -535,7 +535,8 @@ async def get_mandatory_files(db: Session = Depends(get_db), include_content: bo
                     "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,
                     "description": f.description,
                     "extracted_text": f.extracted_text if include_content else None,  # Only include if requested
-                    "has_content": bool(f.extracted_text)  # Indicate if content exists
+                    "has_content": bool(f.extracted_text),  # Indicate if content exists
+                    "drive_file_id": f.drive_file_id
                 }
                 for f in files
             ]
@@ -793,6 +794,152 @@ async def add_project_knowledge_base_file(
         return {
             "success": False,
             "error": f"Error adding file to knowledge base: {str(e)}"
+        }
+
+@app.post("/api/project-knowledge-base/add-from-drive")
+async def add_project_knowledge_base_file_from_drive(
+    file_id: int = Form(...),
+    user_email: str = Form(...),
+    access_token: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    """Add a file to user's project knowledge base by fetching fresh content from Google Drive."""
+    try:
+        mandatory_file = db.query(MandatoryFile).filter(
+            MandatoryFile.id == file_id,
+            MandatoryFile.is_active == True
+        ).first()
+
+        if not mandatory_file:
+            return {"success": False, "error": "File not found or inactive"}
+
+        if not mandatory_file.drive_file_id:
+            # Fallback: no Drive ID stored, use existing extracted_text path
+            return await add_project_knowledge_base_file(
+                file_id=file_id, user_email=user_email, db=db
+            )
+
+        # Download fresh content from Google Drive
+        print(f"[KB-DRIVE] Fetching '{mandatory_file.file_name}' from Drive (ID: {mandatory_file.drive_file_id})...")
+        download_result = download_drive_file_content(
+            mandatory_file.drive_file_id,
+            mandatory_file.file_name,
+            f"application/{mandatory_file.file_type}",
+            access_token
+        )
+
+        if not download_result.get("success"):
+            return {"success": False, "error": f"Failed to fetch from Drive: {download_result.get('error')}"}
+
+        file_content_bytes = download_result["content"]
+        file_extension = download_result["file_type"]
+
+        # Extract text from downloaded bytes
+        extracted_text = ""
+        from services.pdf_service import pdf_service
+        from services.docx_extraction_helper import extract_text_with_hyperlinks_from_docx
+
+        if file_extension == 'pdf':
+            result = pdf_service.extract_text_from_pdf(file_content_bytes)
+            extracted_text = result['text'] if result['success'] else mandatory_file.extracted_text or ""
+        elif file_extension in ['docx', 'doc']:
+            try:
+                extracted_text = extract_text_with_hyperlinks_from_docx(file_content_bytes)
+            except Exception:
+                import io
+                from docx import Document as DocxDocument
+                doc = DocxDocument(io.BytesIO(file_content_bytes))
+                extracted_text = "\n".join([p.text.strip() for p in doc.paragraphs if p.text.strip()])
+        elif file_extension == 'txt':
+            extracted_text = file_content_bytes.decode('utf-8', errors='ignore')
+        elif file_extension in ['xlsx', 'xls']:
+            import io
+            from openpyxl import load_workbook
+            workbook = load_workbook(filename=io.BytesIO(file_content_bytes), data_only=True)
+            lines = []
+            for sheet in workbook.worksheets:
+                lines.append(f"Sheet: {sheet.title}")
+                for row in sheet.iter_rows(values_only=True):
+                    cells = [str(cell) for cell in row if cell is not None]
+                    if cells:
+                        lines.append("\t".join(cells))
+            extracted_text = "\n".join(lines) if lines else ""
+        else:
+            # Unsupported type for re-extraction; fall back to stored text
+            extracted_text = mandatory_file.extracted_text or ""
+
+        # Update the stored extracted_text with fresh content
+        if extracted_text:
+            mandatory_file.extracted_text = extracted_text
+            db.commit()
+            print(f"[KB-DRIVE] Updated extracted_text for file {file_id} ({len(extracted_text)} chars)")
+
+        # Add to knowledge base table if not already there
+        existing = db.query(ProjectKnowledgeBaseFile).filter(
+            ProjectKnowledgeBaseFile.user_email == user_email,
+            ProjectKnowledgeBaseFile.mandatory_file_id == file_id
+        ).first()
+
+        if not existing:
+            knowledge_base_file = ProjectKnowledgeBaseFile(
+                user_email=user_email,
+                mandatory_file_id=file_id
+            )
+            db.add(knowledge_base_file)
+            db.commit()
+
+        # Chunk and index to Pinecone
+        if extracted_text:
+            try:
+                from services.pinecone_service import pinecone_service
+                from services.chunking_service import chunking_service
+                from services.embedding_service import embedding_service
+
+                index_result = pinecone_service.create_index_for_file(
+                    file_id=file_id,
+                    file_name=mandatory_file.file_name
+                )
+
+                if index_result.get("success"):
+                    chunks = chunking_service.chunk_text_by_characters(
+                        text=extracted_text,
+                        chunk_size=400,
+                        chunk_overlap=100,
+                        metadata={
+                            "file_id": file_id,
+                            "file_name": mandatory_file.file_name,
+                            "file_type": file_extension
+                        }
+                    )
+                    if chunks:
+                        chunk_texts = [chunk["text"] for chunk in chunks]
+                        embeddings = embedding_service.embed(chunk_texts)
+                        index_chunks_result = pinecone_service.index_file_chunks(
+                            file_id=file_id,
+                            file_name=mandatory_file.file_name,
+                            chunks=chunks,
+                            embeddings=embeddings
+                        )
+                        if index_chunks_result.get("success"):
+                            print(f"[KB-DRIVE] Indexed {index_chunks_result.get('chunks_indexed', 0)} chunks for file {file_id}")
+                        else:
+                            print(f"[KB-DRIVE] Failed to index chunks: {index_chunks_result.get('error')}")
+            except Exception as e:
+                print(f"[KB-DRIVE] Pinecone indexing error: {str(e)}")
+                import traceback
+                print(traceback.format_exc())
+
+        return {
+            "success": True,
+            "message": f"File '{mandatory_file.file_name}' fetched from Drive and added to knowledge base",
+            "file_id": file_id
+        }
+
+    except Exception as e:
+        db.rollback()
+        return {
+            "success": False,
+            "error": f"Error adding file from Drive to knowledge base: {str(e)}"
         }
 
 @app.delete("/api/project-knowledge-base/remove")
@@ -1907,7 +2054,8 @@ async def upload_from_drive(
                     file_size=len(file_content_bytes),
                     uploaded_by=uploaded_by or "anonymous",
                     is_active=True,
-                    extracted_text=extracted_text
+                    extracted_text=extracted_text,
+                    drive_file_id=file_id
                 )
                 
                 db.add(mandatory_file)

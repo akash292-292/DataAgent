@@ -74,7 +74,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,  # Specify exact origins, not "*"
     allow_credentials=True,          # ✅ CRITICAL: Allows cookies to be sent
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"]             # ✅ Allows frontend to read response headers
 )
@@ -87,6 +87,8 @@ logger.info(f"✅ CORS enabled for origins: {ALLOWED_ORIGINS}")
 # -------------------------------------------------
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"

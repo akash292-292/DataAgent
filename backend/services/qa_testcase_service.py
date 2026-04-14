@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Optional
 
 import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
+from fastapi import HTTPException
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -49,26 +51,25 @@ EXPORT_DIR.mkdir(exist_ok=True)
 # Lazy model init — does NOT raise at import time
 # --------------------------------------------------
 async def _get_model(user: Optional[str] = None):
-    Redis_Key_Meta,Redis_Key =  await gemini_token_service._get_available_api_key(user)
+    Redis_Key_Meta, Redis_Key = await gemini_token_service._get_available_api_key()
     GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip()
     if Redis_Key:
-            try:
-                genai.configure(api_key=Redis_Key)
-                logger.info(f"✅ Gemini configured with Redis Key: {Redis_Key}")
-            except Exception as e:
-                model = None
-                logger.error(f"❌ Failed to configure Gemini: {e}")
+        try:
+            genai.configure(api_key=Redis_Key)
+            logger.info(f"✅ Gemini configured with Redis Key: {Redis_Key}")
+        except Exception as e:
+            logger.error(f"❌ Failed to configure Gemini: {e}")
     elif GEMINI_KEY:
+        Redis_Key_Meta = None
         try:
             genai.configure(api_key=GEMINI_KEY)
             logger.info(f"✅ Gemini configured with model with GEMINI_KEY: {GEMINI_KEY[:4]}***")
         except Exception as e:
-            model = None
             logger.error(f"❌ Failed to configure Gemini: {e}")
             logger.warning("⚠️ GEMINI_API_KEY not set — LLM calls will use hybrid fallback")
     else:
         raise RuntimeError("GEMINI_API_KEY environment variable not set")
-    return genai.GenerativeModel(MODEL_NAME),Redis_Key_Meta
+    return genai.GenerativeModel(MODEL_NAME), Redis_Key_Meta
 
 
 # --------------------------------------------------
@@ -269,10 +270,17 @@ async def generate_test_cases(document_content: str, focus_query: Optional[str] 
     )
     model, Redis_Key_Meta = await _get_model(user=user)
     prompt = build_main_prompt(document_content, focus_query=focus_query)
-    response = model.generate_content(prompt)
+    try:
+        response = model.generate_content(prompt)
+    except google_exceptions.ResourceExhausted:
+        if Redis_Key_Meta:
+            await gemini_token_service._handle_429(Redis_Key_Meta)
+        raise HTTPException(status_code=429, detail="Too many requests. Please try again in a few minutes.")
+    except google_exceptions.ServiceUnavailable:
+        if Redis_Key_Meta:
+            await gemini_token_service._handle_503(Redis_Key_Meta)
+        raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
     logger.info("Model response received: %d chars", len(response.text))
-    await gemini_token_service._release_key(Redis_Key_Meta)
-    await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
     return _process_test_case_response(response.text)
 
 
@@ -300,10 +308,17 @@ async def generate_test_cases_from_bytes(
         file_ref = _upload_pdf_to_gemini(content)
         try:
             prompt = build_main_prompt_native(focus_query=focus_query)
-            response = model.generate_content([file_ref, prompt])
+            try:
+                response = model.generate_content([file_ref, prompt])
+            except google_exceptions.ResourceExhausted:
+                if Redis_Key_Meta:
+                    await gemini_token_service._handle_429(Redis_Key_Meta)
+                raise HTTPException(status_code=429, detail="Too many requests. Please try again in a few minutes.")
+            except google_exceptions.ServiceUnavailable:
+                if Redis_Key_Meta:
+                    await gemini_token_service._handle_503(Redis_Key_Meta)
+                raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
             logger.info("PDF test case generation complete: %d chars in response", len(response.text))
-            await gemini_token_service._release_key(Redis_Key_Meta)
-            await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
         finally:
             try:
                 genai.delete_file(file_ref.name)
@@ -318,20 +333,34 @@ async def generate_test_cases_from_bytes(
         parts: list = [prompt, text]
         parts += [{"mime_type": mime, "data": img_bytes} for mime, img_bytes in images]
         logger.info("Sending %d parts to Gemini (text + %d images)", len(parts), len(images))
-        response = model.generate_content(parts)
+        try:
+            response = model.generate_content(parts)
+        except google_exceptions.ResourceExhausted:
+            if Redis_Key_Meta:
+                await gemini_token_service._handle_429(Redis_Key_Meta)
+            raise HTTPException(status_code=429, detail="Too many requests. Please try again in a few minutes.")
+        except google_exceptions.ServiceUnavailable:
+            if Redis_Key_Meta:
+                await gemini_token_service._handle_503(Redis_Key_Meta)
+            raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
         logger.info("DOCX test case generation complete: %d chars in response", len(response.text))
-        await gemini_token_service._release_key(Redis_Key_Meta)
-        await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
 
     elif ext == "csv":
         logger.info("CSV path → native Gemini Files API upload (text/csv)")
         file_ref = _upload_csv_to_gemini(content)
         try:
             prompt = build_main_prompt_native(focus_query=focus_query)
-            response = model.generate_content([file_ref, prompt])
+            try:
+                response = model.generate_content([file_ref, prompt])
+            except google_exceptions.ResourceExhausted:
+                if Redis_Key_Meta:
+                    await gemini_token_service._handle_429(Redis_Key_Meta)
+                raise HTTPException(status_code=429, detail="Too many requests. Please try again in a few minutes.")
+            except google_exceptions.ServiceUnavailable:
+                if Redis_Key_Meta:
+                    await gemini_token_service._handle_503(Redis_Key_Meta)
+                raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
             logger.info("CSV test case generation complete: %d chars in response", len(response.text))
-            await gemini_token_service._release_key(Redis_Key_Meta)
-            await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
         finally:
             try:
                 genai.delete_file(file_ref.name)

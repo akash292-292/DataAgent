@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import axios from 'axios';
 import './HomePage.css';
+import GoogleDrivePicker from '../../qa/GoogleDrivePicker';
 /* global gapi:readonly, google:readonly */ 
 // gapi and google are external globals loaded by index.html scripts.
 
@@ -53,49 +54,11 @@ const HomePage = () => {
   const [toastMessage, setToastMessage] = useState('');
   const isChatFullscreen = true;
   const [accessToken, setAccessToken] = useState('');
+  const accessTokenRef = useRef('');
   const [chatDriveAccessToken, setChatDriveAccessToken] = useState('');
   const chatTokenRef = useRef('');
-
-
-  // Placeholder function for scope visibility
-// CHANGE: Add 'manualToken' to the arguments
-const createPicker = useCallback((userEmail, manualToken) => {
-    
-    // CHANGE: Prioritize the manualToken over the state variable
-    const tokenToUse = manualToken || accessToken;
-
-    if (!tokenToUse) {
-        console.warn("No access token found for picker.");
-        return;
-    }
-
-    if (!window.google || !window.google.picker) {
-        console.error("Google Picker API object not found.");
-        alert("Google services are still loading. Please try again.");
-        return;
-    }
-
-    const view = new window.google.picker.View(window.google.picker.ViewId.DOCS);
-    view.setMimeTypes(
-        'application/pdf,' +
-        'application/vnd.google-apps.document,' +
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document,' +
-        'application/vnd.google-apps.spreadsheet,' +
-        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    );
-
-    const picker = new window.google.picker.PickerBuilder()
-        .setAppId("385613091121") 
-        // CHANGE: Use tokenToUse here
-        .setOAuthToken(tokenToUse) 
-        .setDeveloperKey(DEVELOPER_API_KEY)
-        .addView(view)
-        .enableFeature(window.google.picker.Feature.MULTISELECT_ENABLED)
-        .setCallback((data) => window.pickerCallback(data, userEmail))
-        .build();
-
-    picker.setVisible(true);
-}, [accessToken]); // <--- This ensures the function updates when the user logs in
+  const chatPickerRef = useRef(null);
+  const templatePickerRef = useRef(null);
 
 
 
@@ -578,22 +541,22 @@ const openChatDrivePicker = useCallback((e) => {
     // --- SCENARIO A: Token is already in memory ---
     if (chatDriveAccessToken) {
         console.log("Chat Token available. Launching Picker.");
-        createChatDrivePicker(user.email, chatDriveAccessToken);
+        chatPickerRef.current?.open(chatDriveAccessToken);
         return;
     }
-    
+
     // --- SCENARIO B: Request Token directly (Fixes the COOP/Silent loop error) ---
     console.log("Initiating Google Login for Chat Drive...");
-    
+
     const client = window.google.accounts.oauth2.initTokenClient({
         client_id: GOOGLE_CLIENT_ID,
         scope: DRIVE_SCOPES,
         callback: (tokenResponse) => {
             if (tokenResponse && tokenResponse.access_token) {
-                chatTokenRef.current = tokenResponse.access_token; // <--- ADD THIS
+                chatTokenRef.current = tokenResponse.access_token;
                 setChatDriveAccessToken(tokenResponse.access_token);
                 console.log("✅ Token received. Launching Picker.");
-                createChatDrivePicker(user.email, tokenResponse.access_token);
+                chatPickerRef.current?.open(tokenResponse.access_token);
             } else if (tokenResponse.error) {
                 console.error("Token error:", tokenResponse.error);
             }
@@ -606,51 +569,7 @@ const openChatDrivePicker = useCallback((e) => {
 }, [isPickerReady, user?.email]);
 
 
-/*******************************************************
- * CHAT GOOGLE DRIVE PICKER CORE LOGIC
- * This ensures folder browsing but prevents folder selection.
- *******************************************************/
-
-// 1. Function to create the Google Picker for Chat
-function createChatDrivePicker(userEmail, passedToken)  {
-  if (!window.google || !window.google.picker || !passedToken) {
-    console.error("Chat Picker not fully ready or token missing.");
-    return;
-  }
-
-  // CRITICAL: Configure the DocsView
-  const view = new window.google.picker.DocsView()
-    // Show folders in the list, allowing navigation (user can double-click)
-    .setIncludeFolders(true)          
-    // IMPORTANT: Disables the ability to select the folder itself (only files are selectable)
-    .setSelectFolderEnabled(false); 
-
-  // Restrict to file types compatible with your current ingestion logic
-  view.setMimeTypes(
-    'application/pdf,' +
-    'application/vnd.google-apps.document,' +
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document,' +
-    'application/vnd.google-apps.spreadsheet,' +
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,' +
-    'text/plain,' +
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-  );
-
-  const picker = new window.google.picker.PickerBuilder()
-    .setAppId(window.google.picker.PickerBuilder.GOOGLE_DOCS_APP_ID)
-    .setOAuthToken(passedToken)
-    .setAuthUser(userEmail) // <--- Add this line
-    .setDeveloperKey(DEVELOPER_API_KEY)
-    .addView(view)
-    .enableFeature(window.google.picker.Feature.MULTISELECT_ENABLED) // Enable multiple file selection
-    .setCallback(chatDrivePickerCallback) // Use new, chat-specific callback
-    .build();
-
-  picker.setVisible(true);
-}
-
-
-// 2. Callback function triggered once files are selected (Sends to /api/process-multi-files)
+// Callback function triggered once files are selected (Sends to /api/process-multi-files)
 const uploadChatDriveFiles = async (files, passedToken) => {
     if (!files.length) return;
 
@@ -743,30 +662,6 @@ const uploadChatDriveFiles = async (files, passedToken) => {
     }
 }
 
-// 3. Main callback function from the Picker
-function chatDrivePickerCallback(data) {
-    // Only proceed if the action was a selection
-    if (data.action !== window.google.picker.Action.PICKED) {
-        console.log("Chat Drive Picker closed by user or cancelled.");
-        return;
-    }
-
-    // Only process Docs (files), ignore other types returned by picker (like folder entries)
-    const files = data.docs.filter(doc => doc.type === 'document' || doc.type === 'file' || doc.is_document);
-
-    if (!files.length) {
-        const warningMessage = {
-            text: "⚠️ No supported files were selected. Please select PDF, DOCX, XLSX, or plain text files.",
-            type: 'bot',
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        };
-        setChatMessages(prev => [...prev, warningMessage]);
-        return;
-    }
-
-    // Pass the filtered file list to the upload handler
-    uploadChatDriveFiles(files, chatTokenRef.current);
-}
 const initiateDriveUpload = useCallback((userEmail) => {
 
     // 1. Mandatory Readiness Check: If false, the button SHOULD NOT even be clicked,
@@ -786,7 +681,7 @@ const initiateDriveUpload = useCallback((userEmail) => {
     // --- SCENARIO A: Token is already in memory ('accessToken'). ---
     if (accessToken) {
         console.log("Token available in memory. Launching Picker directly.");
-        createPicker(userEmail); 
+        templatePickerRef.current?.open(accessToken);
         setShowFileSourceModal(false);
         return;
     }
@@ -796,16 +691,17 @@ const initiateDriveUpload = useCallback((userEmail) => {
     // Define the central callback function for both attempts
 const handleTokenResponse = (tokenResponse) => {
     if (tokenResponse && tokenResponse.access_token) {
-        // 1. Update React state for subsequent uses
-        setAccessToken(tokenResponse.access_token); 
-        
+        // 1. Update React state and ref for subsequent uses
+        accessTokenRef.current = tokenResponse.access_token;
+        setAccessToken(tokenResponse.access_token);
+
         console.log("Token retrieved successfully. Launching Picker.");
 
         // 2. Close the selection modal
         setShowFileSourceModal(false);
         
-        // 3. PASS THE TOKEN DIRECTLY here
-        createPicker(userEmail, tokenResponse.access_token); 
+        // 3. Open the templates picker with the fresh token
+        templatePickerRef.current?.open(tokenResponse.access_token);
     } else if (tokenResponse.error === 'popup_closed_by_user') {
         console.warn("Authentication popup closed by user.");
     } else {
@@ -844,7 +740,7 @@ const handleTokenResponse = (tokenResponse) => {
     // It's safer to let the handler manage closure (as above) to avoid the flicker.
     // We will rely on setShowFileSourceModal(false) inside the success path of the callback.
 
-}, [isPickerReady, user?.email]);
+}, [isPickerReady, user?.email, accessToken]);
 // Note: setShowFileSourceModal is not included in dependency array as it's a stable setter function.
 // The explicit call to setShowFileSourceModal is moved inside the success path of handleTokenResponse.
 // 2. Picker Callback Function Definition (defined as a standard const using useCallback)
@@ -862,7 +758,7 @@ const pickerCallback = useCallback((data, userEmail) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             files,
-            access_token: accessToken,
+            access_token: accessTokenRef.current,
             user_email: userEmail
         })
     })
@@ -896,7 +792,7 @@ const pickerCallback = useCallback((data, userEmail) => {
         console.error("Drive Upload Error:", err);
     });
 
-}, [accessToken, fetchMandatoryFiles, setMandatoryFiles, setUploadedFileIds, setUploadedFileId]);
+}, [fetchMandatoryFiles, setMandatoryFiles, setUploadedFileIds, setUploadedFileId]);
 
 // --- END of Corrected Picker Callback Definition ---
 
@@ -1968,7 +1864,7 @@ const pickerCallback = useCallback((data, userEmail) => {
       const currentChatId = ensureChatId();
       const questionFormData = new FormData();
       questionFormData.append('question', question);
-      questionFormData.append('file_context', combinedContext);
+      // questionFormData.append('file_context', combinedContext);
       questionFormData.append('mandatory_file_ids', JSON.stringify(markedFileIds));
       questionFormData.append('chat_id', currentChatId);
       if (user?.email) {
@@ -2239,7 +2135,7 @@ const pickerCallback = useCallback((data, userEmail) => {
   };
 
   // Toggle file marking for project use (save to database)
-  const handleToggleFileForProject = async (fileId, fileName) => {
+  const handleToggleFileForProject = async (fileId, fileName, driveFileId = null) => {
     if (!user?.email) {
       setToastMessage('Please log in to save project knowledge base selections');
       setToastVisible(true);
@@ -2250,7 +2146,7 @@ const pickerCallback = useCallback((data, userEmail) => {
     try {
       const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
       const isCurrentlyMarked = filesMarkedForProject.has(fileId);
-      
+
       let response;
       if (isCurrentlyMarked) {
         // Remove from knowledge base
@@ -2258,15 +2154,24 @@ const pickerCallback = useCallback((data, userEmail) => {
           method: 'DELETE'
         });
       } else {
-        // Add to knowledge base
         const formData = new FormData();
         formData.append('file_id', fileId);
         formData.append('user_email', user.email);
-        
-        response = await fetch(`${apiUrl}/api/project-knowledge-base/add`, {
-          method: 'POST',
-          body: formData
-        });
+
+        if (driveFileId && accessToken) {
+          // Fetch fresh content from Google Drive, chunk and index
+          formData.append('access_token', accessToken);
+          response = await fetch(`${apiUrl}/api/project-knowledge-base/add-from-drive`, {
+            method: 'POST',
+            body: formData
+          });
+        } else {
+          // Fallback: use already-stored extracted_text
+          response = await fetch(`${apiUrl}/api/project-knowledge-base/add`, {
+            method: 'POST',
+            body: formData
+          });
+        }
       }
       
       const data = await response.json();
@@ -2385,24 +2290,6 @@ const pickerCallback = useCallback((data, userEmail) => {
     }
   }, [user?.email]);
 
-  // --- PASTE THIS NEW EFFECT BLOCK HERE (e.g., around line 580) ---
-
-// EFFECT to expose the component's pickerCallback function globally.
-// This is necessary because the Google Picker code is global and calls window.pickerCallback.
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-        window.pickerCallback = pickerCallback;
-    }
-    
-    // Cleanup function
-    return () => {
-        if (typeof window !== 'undefined') {
-            delete window.pickerCallback;
-        }
-    };
-}, [pickerCallback]); // This dependency ensures the global reference is stable.
-
-// --- END of NEW EFFECT BLOCK ---
   useEffect(() => {
     const script = document.createElement("script");
     script.src = "https://apis.google.com/js/api.js";
@@ -2734,6 +2621,20 @@ const pickerCallback = useCallback((data, userEmail) => {
   // Main return statement
   return (
     <div className={`pm-scope home-page ${isChatFullscreen ? 'chat-fullscreen-active' : ''}`}>
+      {/* Chat Google Drive Picker — renders null, opened imperatively via chatPickerRef */}
+      <GoogleDrivePicker
+        ref={chatPickerRef}
+        accessToken={chatDriveAccessToken}
+        multiSelect={true}
+        onFileSelected={(files) => uploadChatDriveFiles(files, chatTokenRef.current)}
+      />
+      {/* Templates / Mandatory Files Google Drive Picker */}
+      <GoogleDrivePicker
+        ref={templatePickerRef}
+        accessToken={accessToken}
+        multiSelect={true}
+        onFileSelected={(docs) => pickerCallback({ action: window.google.picker.Action.PICKED, docs }, user?.email)}
+      />
       {/* Loading Overlay */}
       {loading && (
         <div className="loading-overlay">
@@ -3013,7 +2914,7 @@ const pickerCallback = useCallback((data, userEmail) => {
                                                 e.preventDefault();
                                                 e.stopPropagation();
                                                 if (file.id && file.file_name) {
-                                                  handleToggleFileForProject(file.id, file.file_name);
+                                                  handleToggleFileForProject(file.id, file.file_name, file.drive_file_id);
                                                 }
                                               } catch (err) {
                                                 console.error('Error toggling file for project:', err);
@@ -3799,23 +3700,22 @@ const pickerCallback = useCallback((data, userEmail) => {
           <div className="file-source-modal" onClick={(e) => e.stopPropagation()}>
             <h2 className="file-source-modal-title">Select the file on which you want me to work on!</h2>
             <div className="file-source-options">
-              <button 
-                  className="file-source-option"
-                  onClick={() => {
-                    // Check readiness and authentication directly before running main logic
-                    const isReady = isPickerReady && window.google?.accounts?.oauth2;
+               <button
+                 className="file-source-option"
+                   onClick={(e) => {
+                   // Check readiness and authentication directly before running main logic
+                     const isReady = isPickerReady && window.google?.accounts?.oauth2;
 
-                    if (user?.email && isReady) {
-                        initiateDriveUpload(user.email); 
-                    } else {
-                        alert(isReady ? 
-                            'Please log in to upload from Google Drive.' : 
-                            'Google Drive services are still loading. Please try again in a moment.'
-                        );
-                    }
-                    }}
-                    // Remove disabled attribute entirely to stop unexpected blocking
-                
+                     if (user?.email && isReady) {
+                         initiateDriveUpload(user.email);
+                    } else {
+                      alert(isReady ? 
+                          'Please log in to upload from Google Drive.' : 
+                         'Google Drive services are still loading. Please try again in a moment.'
+                    );
+                   }
+                  }}
+                     // Remove disabled attribute entirely to stop unexpected blocking
                   >
                 <div className="file-source-icon gdrive-icon">
                   <svg width="28" height="28" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">

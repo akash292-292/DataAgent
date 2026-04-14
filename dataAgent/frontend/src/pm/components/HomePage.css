@@ -5786,60 +5786,16 @@
   margin-top: -4px;
 }
 
-/* --- CSS FIX FOR DRIVE PICKER STACKING (Add this block) --- */
-
-/* 1. Ensure Google Picker iframe is always at the highest Z-index */
-/* The picker typically lives in an iframe created by Google's script. */
-.pm-scope iframe[aria-label="Google Drive Picker"] {
-    /* Use the highest possible value */
-    z-index: 2147483647 !important; 
-    position: fixed !important; 
-    top: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    bottom: 0 !important;
-    width: 100% !important;
-    height: 100% !important;
+/* --- Google Drive Picker z-index fix ---
+   Google injects .picker-dialog-bg and .picker-dialog directly into document.body,
+   outside .pm-scope, so selectors must be global (no .pm-scope prefix).
+   App's highest z-index is 10000 (chat-fullscreen), so 20000+ clears it.
+-------------------------------------------------- */
+.picker-dialog-bg {
+    z-index: 20000 !important;
 }
-
-/* 2. Target the file source modal overlay (where you click the button) 
-   and ensure it is not trapping the picker with a rigid layout. */
-.pm-scope .file-source-modal-overlay {
-    /* Current Z-index is 100000, which is good, but let's ensure stacking context is clean */
-    z-index: 100000;
-}
-/* FORCE Google Picker to appear ABOVE your React UI + FIX SIZE */
-.pm-scope .picker-dialog,
-iframe[id^="picker"],
-.pm-scope iframe[src*="picker"] {
-    width: 650px !important;         /* outer box width */
-    height: 520px !important;        /* outer box height */
-    left: 50% !important;            /* center horizontally */
-    top: 50% !important;             /* center vertically */
-    transform: translate(-50%, -50%) !important;
-    border-radius: 10px !important;
-    z-index: 999999 !important;
-    position: fixed !important;
-}
-/* FIX INNER GOOGLE PICKER WIDTH */
-.pm-scope .picker-dialog .picker,
-.pm-scope .picker-dialog .picker-content,
-.pm-scope .picker-dialog .picker-main,
-.pm-scope .picker-dialog .picker-content-area,
-.pm-scope .picker-dialog .picker-section,
-.pm-scope .picker-dialog .picker-files,
-.pm-scope .picker-dialog .picker-dialog-content {
-    width: 100% !important;
-    max-width: 100% !important;
-    min-width: 0 !important;     /* THE KEY FIX */
-    overflow: hidden !important;
-}
-
-
-/* LOWER your app UI so Picker appears on top */
-.pm-scope .chat-expanded-container {
-    width: 420px !important;
-    max-width: 420px !important;
+.picker-dialog {
+    z-index: 20001 !important;
 }
 
 .pm-scope .chat-window {

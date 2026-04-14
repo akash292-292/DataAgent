@@ -4,12 +4,18 @@ CRUD endpoints for Data Governance projects and their phase records.
 Uses the shared PostgreSQL DB defined in backend/pm_agent/models.py.
 """
 import io
+import os
 import sys
+import ssl
 import uuid
 import logging
+import smtplib
+import threading
 from pathlib import Path
 from typing import Optional, List
 from datetime import datetime, timezone
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -61,6 +67,17 @@ try:
 except Exception as _e:
     logger.warning("governance_routes: could not run column migrations on startup: %s", _e)
 
+try:
+    with engine.connect() as _conn:
+        try:
+            _conn.execute(text("ALTER TABLE governance_projects ADD COLUMN is_active BOOLEAN DEFAULT TRUE"))
+            _conn.commit()
+            logger.info("governance_routes: added is_active column to governance_projects")
+        except Exception:
+            _conn.rollback()
+except Exception as _e:
+    logger.warning("governance_routes: could not add is_active column: %s", _e)
+
 # Templates live in the frontend's public/templates folder
 _TEMPLATES_DIR = Path(__file__).parent.parent.parent / "dataAgent" / "frontend" / "public" / "templates"
 
@@ -77,6 +94,70 @@ def _is_super_admin(email: str) -> bool:
     return email.strip().lower() in _SUPER_ADMINS
 
 
+def _notify_super_admins_new_project(project_name: str, project_type: str, created_by: str):
+    """Send a notification email to all super admins when a new project is created."""
+    if not _SUPER_ADMINS:
+        return
+    smtp_host     = os.getenv("SMTP_HOST", "")
+    smtp_port     = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user     = os.getenv("SMTP_USER", "")
+    smtp_password = os.getenv("SMTP_PASSWORD", "")
+    mail_from     = os.getenv("MAIL_FROM", smtp_user)
+
+    if not smtp_host or not smtp_user or not smtp_password:
+        logger.warning("SMTP not configured — skipping new project notification.")
+        return
+
+    type_label = "Data Integration" if project_type == "DI" else "Data Migration"
+    subject = f"[New Project] {project_name} ({type_label}) created by {created_by}"
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#1a2b50;">
+      <p>Hi,</p>
+      <p>A new data governance project has been created:</p>
+      <table style="border-collapse:collapse;margin-top:12px;">
+        <tr>
+          <td style="padding:8px 16px;border:1px solid #dde3f0;font-weight:600;background:#f4f7ff;">Project Name</td>
+          <td style="padding:8px 16px;border:1px solid #dde3f0;">{project_name}</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 16px;border:1px solid #dde3f0;font-weight:600;background:#f4f7ff;">Project Type</td>
+          <td style="padding:8px 16px;border:1px solid #dde3f0;">{type_label}</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 16px;border:1px solid #dde3f0;font-weight:600;background:#f4f7ff;">Created By</td>
+          <td style="padding:8px 16px;border:1px solid #dde3f0;">{created_by}</td>
+        </tr>
+      </table>
+      <p style="color:#6b7a9d;font-size:0.85rem;margin-top:20px;">
+        This is an automated notification from the Data Project Governance system.
+      </p>
+    </body></html>
+    """
+
+    def _send():
+        try:
+            cc_list = list(_SUPER_ADMINS)
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"]    = mail_from
+            msg["To"]      = created_by
+            if cc_list:
+                msg["Cc"] = ", ".join(cc_list)
+            msg.attach(MIMEText(html_body, "html"))
+            recipients = [created_by] + cc_list
+            context = ssl.create_default_context()
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.login(smtp_user, smtp_password)
+                server.sendmail(mail_from, recipients, msg.as_string())
+            logger.info("New project notification sent to %s (cc: %s) for: %s", created_by, cc_list, project_name)
+        except Exception:
+            logger.exception("Failed to send new project notification.")
+
+    threading.Thread(target=_send, daemon=True).start()
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -87,7 +168,7 @@ def get_db():
 
 
 
-# Test trigger endpoint (for manual testing only)
+# Test trigger endpoints (for manual testing only)
 @router.post("/test-overdue-check")
 def trigger_overdue_check():
     """Manually trigger the overdue check — for testing only."""
@@ -95,6 +176,17 @@ def trigger_overdue_check():
         from api.governance_scheduler import check_overdue_phases
         check_overdue_phases()
         return {"status": "ok", "message": "Overdue check ran. Check server logs and your inbox."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@router.post("/test-incomplete-check")
+def trigger_incomplete_check():
+    """Manually trigger the hourly incomplete-project reminder — for testing only."""
+    try:
+        from api.governance_scheduler import check_incomplete_projects
+        check_incomplete_projects()
+        return {"status": "ok", "message": "Incomplete-project check ran. Check server logs and your inbox."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -130,6 +222,7 @@ def project_to_dict(p: GovernanceProject) -> dict:
         "user_email": p.user_email,
         "project_name": p.project_name,
         "project_type": p.project_type,
+        "is_active": p.is_active if p.is_active is not None else True,
         "created_at": p.created_at.isoformat() if p.created_at else None,
         "updated_at": p.updated_at.isoformat() if p.updated_at else None,
     }
@@ -432,6 +525,7 @@ def create_project(payload: ProjectPayload, db: Session = Depends(get_db)):
     db.add(project)
     db.commit()
     db.refresh(project)
+    _notify_super_admins_new_project(project.project_name, project.project_type, project.user_email)
     return project_to_dict(project)
 
 
@@ -454,15 +548,96 @@ def update_project(project_id: str, payload: ProjectPayload, db: Session = Depen
 
 @router.delete("/projects/{project_id}", status_code=204)
 def delete_project(project_id: str, email: str = Query(...), db: Session = Depends(get_db)):
-    project = (
-        db.query(GovernanceProject)
-        .filter(GovernanceProject.id == project_id, GovernanceProject.user_email == email)
-        .first()
-    )
+    query = db.query(GovernanceProject).filter(GovernanceProject.id == project_id)
+    if not _is_super_admin(email):
+        query = query.filter(GovernanceProject.user_email == email)
+    project = query.first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
     db.delete(project)
     db.commit()
+
+
+@router.patch("/projects/{project_id}/toggle-status")
+def toggle_project_status(
+    project_id: str,
+    email: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    if not _is_super_admin(email):
+        raise HTTPException(status_code=403, detail="Super admin access required.")
+    project = db.query(GovernanceProject).filter(GovernanceProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    current = project.is_active if project.is_active is not None else True
+    project.is_active = not current
+    db.commit()
+    db.refresh(project)
+    return {"id": project.id, "is_active": project.is_active}
+
+
+# ─── Mail to owner ────────────────────────────────────────────────────────────
+
+class MailOwnerPayload(BaseModel):
+    email: str      # super admin's email (for auth check)
+    message: str    # custom body text from popup
+
+
+@router.post("/projects/{project_id}/mail-owner")
+def mail_project_owner(project_id: str, payload: MailOwnerPayload, db: Session = Depends(get_db)):
+    if not _is_super_admin(payload.email):
+        raise HTTPException(status_code=403, detail="Super admin access required.")
+
+    project = db.query(GovernanceProject).filter(GovernanceProject.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    owner_email  = project.user_email
+    project_name = project.project_name
+    status_label = "Active" if (project.is_active is None or project.is_active) else "Inactive"
+    message_text = payload.message
+
+    smtp_host     = os.getenv("SMTP_HOST", "")
+    smtp_port     = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user     = os.getenv("SMTP_USER", "")
+    smtp_password = os.getenv("SMTP_PASSWORD", "")
+    mail_from     = os.getenv("MAIL_FROM", smtp_user)
+
+    if not smtp_host or not smtp_user or not smtp_password:
+        raise HTTPException(status_code=503, detail="SMTP not configured on the server.")
+
+    subject   = f"{project_name} - {status_label}"
+    cc_list   = list(_SUPER_ADMINS)
+    body_html = f"""
+    <html><body style="font-family:Arial,sans-serif;color:#1a2b50;line-height:1.6;">
+      <p>Dear Project Manager,</p>
+      <p>{message_text.replace(chr(10), '<br>')}</p>
+      <p style="margin-top:24px;">Kind regards,<br><strong>COE</strong></p>
+    </body></html>
+    """
+
+    def _send():
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"]    = mail_from
+            msg["To"]      = owner_email
+            if cc_list:
+                msg["Cc"] = ", ".join(cc_list)
+            msg.attach(MIMEText(body_html, "html"))
+            recipients = [owner_email] + cc_list
+            context = ssl.create_default_context()
+            with smtplib.SMTP(smtp_host, smtp_port) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.login(smtp_user, smtp_password)
+                server.sendmail(mail_from, recipients, msg.as_string())
+            logger.info("Mail to owner sent: project=%s to=%s", project_name, owner_email)
+        except Exception:
+            logger.exception("Failed to send mail-to-owner for project %s", project_name)
+
+    threading.Thread(target=_send, daemon=True).start()
+    return {"status": "ok", "message": "Email queued."}
 
 
 # ─── Phase endpoints ──────────────────────────────────────────────────────────

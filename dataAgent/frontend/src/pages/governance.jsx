@@ -51,6 +51,11 @@ const Governance = () => {
   const [picklists, setPicklists] = useState(EMPTY_PICKLISTS);
   const [picklistsLoading, setPicklistsLoading] = useState(false);
   const [tooltipKey, setTooltipKey] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [dashboardFilter, setDashboardFilter] = useState("all"); // 'all' | 'active' | 'inactive'
+  const [mailModal, setMailModal] = useState(null); // null | { project, bodyText }
+  const [isSendingMail, setIsSendingMail] = useState(false);
+  const [mailModalError, setMailModalError] = useState("");
 
   // ── Check super admin + fetch projects ──────────────────────────────────
   useEffect(() => {
@@ -73,6 +78,7 @@ const Governance = () => {
   const fetchProjects = async () => {
     setIsLoading(true);
     setListError("");
+    setSelectedProjectId(null);
     try {
       const res = await fetch(
         `${BASE_URL}/api/governance/projects?email=${encodeURIComponent(userEmail)}`,
@@ -84,6 +90,46 @@ const Governance = () => {
       setListError(err.message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleToggleStatus = async (project) => {
+    try {
+      const res = await fetch(
+        `${BASE_URL}/api/governance/projects/${project.id}/toggle-status?email=${encodeURIComponent(userEmail)}`,
+        { method: "PATCH", credentials: "include" }
+      );
+      if (!res.ok) throw new Error("Failed to toggle status.");
+      const data = await res.json();
+      setProjects((prev) => prev.map((p) => p.id === project.id ? { ...p, is_active: data.is_active } : p));
+    } catch (err) {
+      setListError(err.message);
+    }
+  };
+
+  const handleSendMail = async () => {
+    if (!mailModal?.bodyText?.trim()) return;
+    setIsSendingMail(true);
+    setMailModalError("");
+    try {
+      const res = await fetch(
+        `${BASE_URL}/api/governance/projects/${mailModal.project.id}/mail-owner`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: userEmail, message: mailModal.bodyText.trim() }),
+        }
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to send email.");
+      }
+      setMailModal(null);
+    } catch (err) {
+      setMailModalError(err.message);
+    } finally {
+      setIsSendingMail(false);
     }
   };
 
@@ -196,6 +242,21 @@ const Governance = () => {
 
   const handleSaveEdit = async () => {
     setEditError("");
+
+    // Validation: planned_date and status are required for every non-blank row
+    const nonBlankRows = phaseRows.filter((r) =>
+      r.phase || r.subphase || r.gate_check || r.status || r.comments || r.planned_date || r.actual_date || r.document_link
+    );
+    const missingStatus = nonBlankRows.filter((r) => !r.status);
+    const missingDate   = nonBlankRows.filter((r) => !r.planned_date);
+    if (missingStatus.length > 0 || missingDate.length > 0) {
+      const parts = [];
+      if (missingStatus.length > 0) parts.push(`Status (${missingStatus.length} row${missingStatus.length > 1 ? "s" : ""})`);
+      if (missingDate.length > 0) parts.push(`Planned Date (${missingDate.length} row${missingDate.length > 1 ? "s" : ""})`);
+      setEditError(`Required fields missing: ${parts.join(" and ")}. Please fill them in before saving.`);
+      return;
+    }
+
     setIsSavingEdit(true);
     try {
       const projRes = await fetch(`${BASE_URL}/api/governance/projects/${editProject.id}`, {
@@ -314,125 +375,330 @@ const Governance = () => {
 
         <ErrorBanner msg={listError} />
 
-        {/* Table Card */}
-        <div style={s.tableCard}>
-          <div style={s.tableCardHeader}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <i className="fas fa-layer-group" style={{ color: "#1453c6" }} />
-              <span style={s.tableCardTitle}>Projects</span>
-              {!isLoading && (
-                <span style={s.countBadge}>
-                  {projects.length} project{projects.length !== 1 ? "s" : ""}
-                </span>
+        {isSuperAdmin ? (
+          /* ── Super-admin split panel ── */
+          <div style={{ display: "flex", gap: 20, flex: 1, minHeight: 0 }}>
+
+            {/* LEFT: Project Dashboard */}
+            <div style={{ flex: "0 0 38%", maxWidth: "38%", display: "flex", flexDirection: "column", background: "white", borderRadius: 20, boxShadow: "0 8px 32px rgba(20,83,198,0.10)", overflow: "hidden" }}>
+              <div style={{ ...s.tableCardHeader, justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <i className="fas fa-chart-bar" style={{ color: "#1453c6" }} />
+                  <span style={s.tableCardTitle}>Project Dashboard</span>
+                  {!isLoading && <span style={s.countBadge}>{projects.length}</span>}
+                </div>
+                {!isLoading && projects.length > 0 && (
+                  <div style={{ display: "flex", gap: 5 }}>
+                    {[
+                      { key: "all",      label: "All",      count: projects.length },
+                      { key: "active",   label: "Active",   count: projects.filter(p => p.is_active !== false).length },
+                      { key: "inactive", label: "Inactive", count: projects.filter(p => p.is_active === false).length },
+                    ].map(({ key, label, count }) => (
+                      <button key={key} onClick={() => setDashboardFilter(key)}
+                        style={dashboardFilter === key ? s.filterPillActive : s.filterPillInactive}>
+                        {label}&nbsp;<span style={{ fontWeight: 400, opacity: 0.75 }}>{count}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {isLoading ? (
+                <div style={s.loadingMsg}><i className="fas fa-spinner fa-spin" style={{ marginRight: 8 }} />Loading...</div>
+              ) : projects.length === 0 ? (
+                <div style={s.emptyState}>
+                  <div style={{ fontSize: "2rem", marginBottom: 10 }}>📋</div>
+                  <div style={{ color: "#5a6c8d", fontSize: "0.9rem" }}>No projects yet.</div>
+                </div>
+              ) : (
+                <div style={{ flex: 1, overflowY: "auto" }}>
+                  <table style={s.table}>
+                    <thead>
+                      <tr>
+                        <th style={s.th}>Project Name</th>
+                        <th style={{ ...s.th, textAlign: "center" }}>Status</th>
+                        <th style={s.th}>Created By</th>
+                        <th style={{ ...s.th, width: 40, textAlign: "center" }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {projects
+                        .slice()
+                        .sort((a, b) => {
+                          const aActive = a.is_active !== false;
+                          const bActive = b.is_active !== false;
+                          if (aActive !== bActive) return aActive ? -1 : 1;
+                          return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+                        })
+                        .filter(p => dashboardFilter === "active" ? p.is_active !== false : dashboardFilter === "inactive" ? p.is_active === false : true)
+                        .map((p) => (
+                        <tr
+                          key={p.id}
+                          onClick={() => setSelectedProjectId((prev) => prev === p.id ? null : p.id)}
+                          style={{ ...s.tr, cursor: "pointer", background: selectedProjectId === p.id ? "#eef2ff" : undefined }}
+                        >
+                          <td style={{ ...s.td, fontWeight: 600, fontSize: "0.87rem" }}>{p.project_name}</td>
+                          <td style={{ ...s.td, textAlign: "center" }}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleToggleStatus(p); }}
+                              style={p.is_active !== false ? s.statusChipActive : s.statusChipInactive}
+                              title="Click to toggle Active / Inactive"
+                            >
+                              {p.is_active !== false ? "Active" : "Inactive"}
+                            </button>
+                          </td>
+                          <td style={{ ...s.td, color: "#5a6c8d", fontSize: "0.82rem" }}>{p.user_email}</td>
+                          <td style={{ ...s.td, textAlign: "center", paddingLeft: 4, paddingRight: 8 }}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setMailModalError(""); setMailModal({ project: p, bodyText: "" }); }}
+                              style={s.mailIconBtn}
+                              title="Mail to owner"
+                            >
+                              <i className="fas fa-envelope" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
-          </div>
 
-          {isLoading ? (
-            <div style={s.loadingMsg}>
-              <i className="fas fa-spinner fa-spin" style={{ marginRight: 8 }} />
-              Loading projects...
+            {/* RIGHT: Project Governance */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "white", borderRadius: 20, boxShadow: "0 8px 32px rgba(20,83,198,0.10)", overflow: "hidden", minWidth: 0 }}>
+              <div style={s.tableCardHeader}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <i className="fas fa-layer-group" style={{ color: "#1453c6" }} />
+                  <span style={s.tableCardTitle}>Project Governance</span>
+                  {!isLoading && <span style={s.countBadge}>{projects.length} project{projects.length !== 1 ? "s" : ""}</span>}
+                </div>
+              </div>
+              {isLoading ? (
+                <div style={s.loadingMsg}><i className="fas fa-spinner fa-spin" style={{ marginRight: 8 }} />Loading projects...</div>
+              ) : projects.length === 0 ? (
+                <div style={s.emptyState}>
+                  <div style={{ fontSize: "2.5rem", marginBottom: 12 }}>📋</div>
+                  <div style={{ color: "#5a6c8d", fontSize: "0.95rem" }}>No projects yet. Click <strong>Create Project</strong> to get started.</div>
+                </div>
+              ) : (
+                <div style={{ flex: 1, overflowX: "auto", overflowY: "auto" }}>
+                  <table style={s.table}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...s.th, width: 40 }}>#</th>
+                        <th style={s.th}>Project Type</th>
+                        <th style={s.th}>Project Name</th>
+                        <th style={s.th}>Created By</th>
+                        <th style={{ ...s.th, textAlign: "center" }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {projects.map((p, i) => (
+                        <tr
+                          key={p.id}
+                          onClick={() => setSelectedProjectId((prev) => prev === p.id ? null : p.id)}
+                          style={{ ...s.tr, cursor: "pointer", background: selectedProjectId === p.id ? "#eef2ff" : undefined }}
+                        >
+                          <td style={{ ...s.td, color: "#b0bcd4", fontWeight: 600, fontSize: "0.8rem" }}>{i + 1}</td>
+                          <td style={s.td}>
+                            <span style={p.project_type === "DI" ? s.typeChipDI : s.typeChipDM}>
+                              <i className="fas fa-database" style={{ marginRight: 6, fontSize: "0.75rem" }} />
+                              {p.project_type === "DI" ? "Data Integration" : "Data Migration"}
+                            </span>
+                          </td>
+                          <td style={{ ...s.td, fontWeight: 600 }}>{p.project_name}</td>
+                          <td style={{ ...s.td, color: "#5a6c8d", fontSize: "0.85rem" }}>{p.user_email}</td>
+                          <td style={{ ...s.td, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+                            <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
+                              {p.user_email !== userEmail ? (
+                                /* Other user's project — view + local + drive + delete */
+                                <>
+                                  <button onClick={() => openView(p)} style={s.actionBtnBlue} title="View project phases">
+                                    <i className="fas fa-eye" style={{ marginRight: 5 }} />View
+                                  </button>
+                                  <button onClick={() => handleDownload(p)} style={s.actionBtnGhost} title="Download filled template">
+                                    <i className="fas fa-download" style={{ marginRight: 5 }} />Local
+                                  </button>
+                                  <button
+                                    onClick={() => handleUploadToDrive(p)}
+                                    disabled={driveLoading[p.id]}
+                                    style={{ ...s.actionBtnGreen, opacity: driveLoading[p.id] ? 0.7 : 1 }}
+                                    title="Save filled template to Google Drive"
+                                  >
+                                    <i className={`fas ${driveLoading[p.id] ? "fa-spinner fa-spin" : "fa-cloud-upload-alt"}`} style={{ marginRight: 5 }} />
+                                    {driveLoading[p.id] ? "Uploading..." : "Save to Drive"}
+                                  </button>
+                                  {driveLinks[p.id] && (
+                                    <a href={driveLinks[p.id]} target="_blank" rel="noopener noreferrer" style={s.driveLink}>
+                                      <i className="fas fa-external-link-alt" style={{ marginRight: 4, fontSize: "0.75rem" }} />Open in Drive
+                                    </a>
+                                  )}
+                                  <button onClick={() => handleDelete(p.id)} style={s.actionBtnRed} title="Delete project">
+                                    <i className="fas fa-trash" style={{ marginRight: 5 }} />Delete
+                                  </button>
+                                </>
+                              ) : (
+                                /* Own project — full access */
+                                <>
+                                  <button onClick={() => openEdit(p)} style={s.actionBtnBlue} title="Edit project and phases">
+                                    <i className="fas fa-edit" style={{ marginRight: 5 }} />Edit
+                                  </button>
+                                  <button onClick={() => handleDownload(p)} style={s.actionBtnGhost} title="Download filled template">
+                                    <i className="fas fa-download" style={{ marginRight: 5 }} />Local
+                                  </button>
+                                  <button
+                                    onClick={() => handleUploadToDrive(p)}
+                                    disabled={driveLoading[p.id]}
+                                    style={{ ...s.actionBtnGreen, opacity: driveLoading[p.id] ? 0.7 : 1 }}
+                                    title="Save filled template to Google Drive"
+                                  >
+                                    <i className={`fas ${driveLoading[p.id] ? "fa-spinner fa-spin" : "fa-cloud-upload-alt"}`} style={{ marginRight: 5 }} />
+                                    {driveLoading[p.id] ? "Uploading..." : "Save to Drive"}
+                                  </button>
+                                  {driveLinks[p.id] && (
+                                    <a href={driveLinks[p.id]} target="_blank" rel="noopener noreferrer" style={s.driveLink}>
+                                      <i className="fas fa-external-link-alt" style={{ marginRight: 4, fontSize: "0.75rem" }} />Open in Drive
+                                    </a>
+                                  )}
+                                  <button onClick={() => handleDelete(p.id)} style={s.actionBtnRed} title="Delete project">
+                                    <i className="fas fa-trash" style={{ marginRight: 5 }} />Delete
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-          ) : projects.length === 0 ? (
-            <div style={s.emptyState}>
-              <div style={{ fontSize: "2.5rem", marginBottom: 12 }}>📋</div>
-              <div style={{ color: "#5a6c8d", fontSize: "0.95rem" }}>
-                No projects yet. Click <strong>Create Project</strong> to get started.
+
+          </div>
+        ) : (
+          /* ── Regular user: single table card ── */
+          <div style={s.tableCard}>
+            <div style={s.tableCardHeader}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <i className="fas fa-layer-group" style={{ color: "#1453c6" }} />
+                <span style={s.tableCardTitle}>Projects</span>
+                {!isLoading && (
+                  <span style={s.countBadge}>
+                    {projects.length} project{projects.length !== 1 ? "s" : ""}
+                  </span>
+                )}
               </div>
             </div>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={s.table}>
-                <thead>
-                  <tr>
-                    <th style={{ ...s.th, width: 40 }}>#</th>
-                    <th style={s.th}>Project Type</th>
-                    <th style={s.th}>Project Name</th>
-                    {isSuperAdmin && <th style={s.th}>Created By</th>}
-                    <th style={{ ...s.th, textAlign: "center" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {projects.map((p, i) => (
-                    <tr key={p.id} style={s.tr}>
-                      <td style={{ ...s.td, color: "#b0bcd4", fontWeight: 600, fontSize: "0.8rem" }}>
-                        {i + 1}
-                      </td>
-                      <td style={s.td}>
-                        <span style={p.project_type === "DI" ? s.typeChipDI : s.typeChipDM}>
-                          <i className="fas fa-database" style={{ marginRight: 6, fontSize: "0.75rem" }} />
-                          {p.project_type === "DI" ? "Data Integration" : "Data Migration"}
-                        </span>
-                      </td>
-                      <td style={{ ...s.td, fontWeight: 600 }}>{p.project_name}</td>
-                      {isSuperAdmin && (
-                        <td style={{ ...s.td, color: "#5a6c8d", fontSize: "0.85rem" }}>{p.user_email}</td>
-                      )}
-                      <td style={{ ...s.td, textAlign: "center" }}>
-                        <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
-                          {isSuperAdmin && p.user_email !== userEmail ? (
-                            /* Other user's project — view + download */
-                            <>
-                              <button onClick={() => openView(p)} style={s.actionBtnBlue} title="View project phases">
-                                <i className="fas fa-eye" style={{ marginRight: 5 }} />View
-                              </button>
-                              <button onClick={() => handleDownload(p)} style={s.actionBtnGhost} title="Download filled template">
-                                <i className="fas fa-download" style={{ marginRight: 5 }} />Local
-                              </button>
-                              <button
-                                onClick={() => handleUploadToDrive(p)}
-                                disabled={driveLoading[p.id]}
-                                style={{ ...s.actionBtnGreen, opacity: driveLoading[p.id] ? 0.7 : 1 }}
-                                title="Save filled template to Google Drive"
-                              >
-                                <i className={`fas ${driveLoading[p.id] ? "fa-spinner fa-spin" : "fa-cloud-upload-alt"}`} style={{ marginRight: 5 }} />
-                                {driveLoading[p.id] ? "Uploading..." : "Save to Drive"}
-                              </button>
-                              {driveLinks[p.id] && (
-                                <a href={driveLinks[p.id]} target="_blank" rel="noopener noreferrer" style={s.driveLink}>
-                                  <i className="fas fa-external-link-alt" style={{ marginRight: 4, fontSize: "0.75rem" }} />
-                                  Open in Drive
-                                </a>
-                              )}
-                            </>
-                          ) : (
-                            /* Own project (or normal user) — full access */
-                            <>
-                              <button onClick={() => openEdit(p)} style={s.actionBtnBlue} title="Edit project and phases">
-                                <i className="fas fa-edit" style={{ marginRight: 5 }} />Edit
-                              </button>
-                              <button onClick={() => handleDownload(p)} style={s.actionBtnGhost} title="Download filled template">
-                                <i className="fas fa-download" style={{ marginRight: 5 }} />Local
-                              </button>
-                              <button
-                                onClick={() => handleUploadToDrive(p)}
-                                disabled={driveLoading[p.id]}
-                                style={{ ...s.actionBtnGreen, opacity: driveLoading[p.id] ? 0.7 : 1 }}
-                                title="Save filled template to Google Drive"
-                              >
-                                <i className={`fas ${driveLoading[p.id] ? "fa-spinner fa-spin" : "fa-cloud-upload-alt"}`} style={{ marginRight: 5 }} />
-                                {driveLoading[p.id] ? "Uploading..." : "Save to Drive"}
-                              </button>
-                              {driveLinks[p.id] && (
-                                <a href={driveLinks[p.id]} target="_blank" rel="noopener noreferrer" style={s.driveLink}>
-                                  <i className="fas fa-external-link-alt" style={{ marginRight: 4, fontSize: "0.75rem" }} />
-                                  Open in Drive
-                                </a>
-                              )}
-                              <button onClick={() => handleDelete(p.id)} style={s.actionBtnRed} title="Delete project">
-                                <i className="fas fa-trash" style={{ marginRight: 5 }} />Delete
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
+            {isLoading ? (
+              <div style={s.loadingMsg}>
+                <i className="fas fa-spinner fa-spin" style={{ marginRight: 8 }} />
+                Loading projects...
+              </div>
+            ) : projects.length === 0 ? (
+              <div style={s.emptyState}>
+                <div style={{ fontSize: "2.5rem", marginBottom: 12 }}>📋</div>
+                <div style={{ color: "#5a6c8d", fontSize: "0.95rem" }}>
+                  No projects yet. Click <strong>Create Project</strong> to get started.
+                </div>
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={s.table}>
+                  <thead>
+                    <tr>
+                      <th style={{ ...s.th, width: 40 }}>#</th>
+                      <th style={s.th}>Project Type</th>
+                      <th style={s.th}>Project Name</th>
+                      <th style={{ ...s.th, textAlign: "center" }}>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {projects.map((p, i) => (
+                      <tr key={p.id} style={s.tr}>
+                        <td style={{ ...s.td, color: "#b0bcd4", fontWeight: 600, fontSize: "0.8rem" }}>{i + 1}</td>
+                        <td style={s.td}>
+                          <span style={p.project_type === "DI" ? s.typeChipDI : s.typeChipDM}>
+                            <i className="fas fa-database" style={{ marginRight: 6, fontSize: "0.75rem" }} />
+                            {p.project_type === "DI" ? "Data Integration" : "Data Migration"}
+                          </span>
+                        </td>
+                        <td style={{ ...s.td, fontWeight: 600 }}>{p.project_name}</td>
+                        <td style={{ ...s.td, textAlign: "center" }}>
+                          <div style={{ display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
+                            <button onClick={() => openEdit(p)} style={s.actionBtnBlue} title="Edit project and phases">
+                              <i className="fas fa-edit" style={{ marginRight: 5 }} />Edit
+                            </button>
+                            <button onClick={() => handleDownload(p)} style={s.actionBtnGhost} title="Download filled template">
+                              <i className="fas fa-download" style={{ marginRight: 5 }} />Local
+                            </button>
+                            <button
+                              onClick={() => handleUploadToDrive(p)}
+                              disabled={driveLoading[p.id]}
+                              style={{ ...s.actionBtnGreen, opacity: driveLoading[p.id] ? 0.7 : 1 }}
+                              title="Save filled template to Google Drive"
+                            >
+                              <i className={`fas ${driveLoading[p.id] ? "fa-spinner fa-spin" : "fa-cloud-upload-alt"}`} style={{ marginRight: 5 }} />
+                              {driveLoading[p.id] ? "Uploading..." : "Save to Drive"}
+                            </button>
+                            {driveLinks[p.id] && (
+                              <a href={driveLinks[p.id]} target="_blank" rel="noopener noreferrer" style={s.driveLink}>
+                                <i className="fas fa-external-link-alt" style={{ marginRight: 4, fontSize: "0.75rem" }} />Open in Drive
+                              </a>
+                            )}
+                            <button onClick={() => handleDelete(p.id)} style={s.actionBtnRed} title="Delete project">
+                              <i className="fas fa-trash" style={{ marginRight: 5 }} />Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Mail to Owner Modal ── */}
+        {mailModal && (
+          <div style={s.modalOverlay} onClick={() => setMailModal(null)}>
+            <div style={s.modalBox} onClick={(e) => e.stopPropagation()}>
+              <div style={s.modalHeader}>
+                <div style={{ fontWeight: 700, fontSize: "1.05rem", color: "#1a2b50" }}>
+                  <i className="fas fa-envelope" style={{ marginRight: 8, color: "#1453c6" }} />
+                  Mail to Owner
+                </div>
+                <div style={{ fontSize: "0.85rem", color: "#5a6c8d", marginTop: 2 }}>
+                  {mailModal.project.project_name} &nbsp;·&nbsp; {mailModal.project.is_active !== false ? "Active" : "Inactive"}
+                </div>
+              </div>
+              <div style={s.modalBody}>
+                <label style={s.fieldLabel}>Message</label>
+                <textarea
+                  value={mailModal.bodyText}
+                  onChange={(e) => setMailModal((prev) => ({ ...prev, bodyText: e.target.value }))}
+                  placeholder="Type your message here..."
+                  rows={6}
+                  style={{ ...s.fieldInput, resize: "vertical", lineHeight: 1.6, minHeight: 120 }}
+                />
+                {mailModalError && <div style={{ ...s.errorBox, marginTop: 10 }}>{mailModalError}</div>}
+              </div>
+              <div style={s.modalFooter}>
+                <button onClick={() => setMailModal(null)} style={s.cancelBtn}>Cancel</button>
+                <button
+                  onClick={handleSendMail}
+                  disabled={!mailModal.bodyText.trim() || isSendingMail}
+                  style={{ ...s.saveBtn, ...(!mailModal.bodyText.trim() || isSendingMail ? s.saveBtnDisabled : {}) }}
+                >
+                  <i className="fas fa-paper-plane" style={{ marginRight: 8 }} />
+                  {isSendingMail ? "Sending..." : "Send Mail"}
+                </button>
+              </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
       </div>
     );
   }
@@ -512,7 +778,10 @@ const Governance = () => {
   // SCREEN 3 — Edit Project (phase records table)  /  SCREEN 4 — View (read-only)
   // ════════════════════════════════════════════════════════════════════════════
   const isViewOnly = view === "view";
-  const cellSelect = (value, onChange, options, placeholder, disabled = false) => (
+  const isRowNonBlank = (row) =>
+    !!(row.phase || row.subphase || row.gate_check || row.status || row.comments || row.planned_date || row.actual_date || row.document_link);
+  const isEditValid = phaseRows.filter(isRowNonBlank).every((r) => r.status && r.planned_date);
+  const cellSelect = (value, onChange, options, placeholder, disabled = false, required = false, rowNonBlank = false) => (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
@@ -520,7 +789,7 @@ const Governance = () => {
       style={{
         width: "100%",
         padding: "7px 28px 7px 10px",
-        border: "1.5px solid #d0d9f0",
+        border: `1.5px solid ${required && rowNonBlank && !value ? "#e53935" : "#d0d9f0"}`,
         borderRadius: 8,
         fontSize: "0.83rem",
         color: value ? "#0a1628" : "#5a6c8d",
@@ -562,8 +831,8 @@ const Governance = () => {
           ) : (
             <button
               onClick={handleSaveEdit}
-              disabled={isSavingEdit}
-              style={{ ...s.saveBtn, ...(isSavingEdit ? s.saveBtnDisabled : {}) }}
+              disabled={isSavingEdit || !isEditValid}
+              style={{ ...s.saveBtn, ...(!isEditValid || isSavingEdit ? s.saveBtnDisabled : {}) }}
             >
               <i className="fas fa-save" style={{ marginRight: 8 }} />
               {isSavingEdit ? "Saving..." : "Save Project"}
@@ -605,9 +874,9 @@ const Governance = () => {
                 <th style={{ ...s.th, width: 40 }}>#</th>
                 <th style={{ ...s.th, minWidth: 180 }}>Phase</th>
                 <th style={{ ...s.th, minWidth: 200 }}>Sub-Phase</th>
-                <th style={{ ...s.th, minWidth: 160 }}>Status</th>
+                <th style={{ ...s.th, minWidth: 160 }}>Status{!isViewOnly && <span style={{ color: "#c0392b", marginLeft: 3 }}>*</span>}</th>
                 <th style={{ ...s.th, minWidth: 260 }}>Comments</th>
-                <th style={{ ...s.th, minWidth: 160 }}>Planned Date</th>
+                <th style={{ ...s.th, minWidth: 160 }}>Planned Date{!isViewOnly && <span style={{ color: "#c0392b", marginLeft: 3 }}>*</span>}</th>
                 <th style={{ ...s.th, minWidth: 160 }}>Actual Date</th>
                 <th style={{ ...s.th, minWidth: 180 }}>Document Link</th>
                 {!isViewOnly && <th style={{ ...s.th, width: 44, textAlign: "center" }}></th>}
@@ -661,7 +930,7 @@ const Governance = () => {
                     </div>
                   </td>
                   <td style={s.td}>
-                    {cellSelect(row.status, (v) => updateRow(row._key, "status", v), picklists.statuses, "Select status...", isViewOnly)}
+                    {cellSelect(row.status, (v) => updateRow(row._key, "status", v), picklists.statuses, "Select status...", isViewOnly, !isViewOnly, isRowNonBlank(row))}
                   </td>
                   <td style={s.td}>
                     <input
@@ -682,9 +951,13 @@ const Governance = () => {
                       value={row.planned_date || ""}
                       onChange={(e) => updateRow(row._key, "planned_date", e.target.value)}
                       disabled={isViewOnly}
-                      style={{ ...s.cellInput, ...(isViewOnly ? { backgroundColor: "#f0f2f8", cursor: "not-allowed" } : {}) }}
+                      style={{
+                        ...s.cellInput,
+                        ...(isViewOnly ? { backgroundColor: "#f0f2f8", cursor: "not-allowed" } : {}),
+                        ...(!isViewOnly && !row.planned_date && isRowNonBlank(row) ? { borderColor: "#e53935" } : {}),
+                      }}
                       onFocus={(e) => (e.target.style.borderColor = "#1453c6")}
-                      onBlur={(e) => (e.target.style.borderColor = "#d0d9f0")}
+                      onBlur={(e) => (e.target.style.borderColor = (!row.planned_date && isRowNonBlank(row) && !isViewOnly) ? "#e53935" : "#d0d9f0")}
                     />
                   </td>
                   <td style={s.td}>
@@ -1146,6 +1419,105 @@ const s = {
     fontWeight: 600,
     color: "#5a6c8d",
     cursor: "pointer",
+  },
+
+  /* Super-admin status chips */
+  statusChipActive: {
+    background: "#eaf7ee",
+    color: "#1a7a3c",
+    border: "1px solid #c3e6d0",
+    borderRadius: 12,
+    padding: "3px 10px",
+    fontSize: "0.75rem",
+    fontWeight: 700,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  statusChipInactive: {
+    background: "#f5f5f5",
+    color: "#6b7a9d",
+    border: "1px solid #d0d9f0",
+    borderRadius: 12,
+    padding: "3px 10px",
+    fontSize: "0.75rem",
+    fontWeight: 700,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+
+  /* Dashboard filter pills */
+  filterPillActive: {
+    background: "linear-gradient(135deg, #1453c6, #2a6ce8)",
+    color: "white",
+    border: "none",
+    borderRadius: 20,
+    padding: "4px 12px",
+    fontSize: "0.75rem",
+    fontWeight: 700,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    boxShadow: "0 2px 6px rgba(20,83,198,0.25)",
+  },
+  filterPillInactive: {
+    background: "white",
+    color: "#5a6c8d",
+    border: "1.5px solid #d0d9f0",
+    borderRadius: 20,
+    padding: "3px 11px",
+    fontSize: "0.75rem",
+    fontWeight: 600,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+
+  /* Mail icon button */
+  mailIconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    border: "1.5px solid #c5d4f7",
+    background: "#eaf0ff",
+    color: "#1453c6",
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: "0.78rem",
+  },
+
+  /* Mail modal */
+  modalOverlay: {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(26,43,80,0.45)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1000,
+  },
+  modalBox: {
+    background: "white",
+    borderRadius: 18,
+    boxShadow: "0 16px 48px rgba(20,83,198,0.22)",
+    width: "100%",
+    maxWidth: 480,
+    overflow: "hidden",
+  },
+  modalHeader: {
+    padding: "20px 24px 16px",
+    borderBottom: "1px solid #e8edf7",
+    background: "linear-gradient(135deg, #f8faff, #f0f4ff)",
+  },
+  modalBody: {
+    padding: "20px 24px",
+  },
+  modalFooter: {
+    display: "flex",
+    gap: 12,
+    justifyContent: "flex-end",
+    padding: "14px 24px",
+    borderTop: "1px solid #e8edf7",
+    background: "#fafbff",
   },
 };
 

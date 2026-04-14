@@ -6,163 +6,135 @@ from core.redis import redis
 import time
 from fastapi.concurrency import run_in_threadpool
 
+RPM_LIMIT = 5
+RPD_LIMIT = 20
+
 
 class GeminiService:
     def __init__(self):
-        # Initialize API keys with fallback support
-        self.api_keys = [
-            os.getenv("GEMINI_API_KEY_1"),      # Primary API key
-            os.getenv("GEMINI_API_KEY_2"),      # Secondary API key  
-            os.getenv("GEMINI_API_KEY_3"),      # Tertiary API key
-            os.getenv("GEMINI_API_KEY_4"),
-            os.getenv("GEMINI_API_KEY_5"),
-            os.getenv("GEMINI_API_KEY_6"),
-            os.getenv("GEMINI_API_KEY_7"),
-            os.getenv("GEMINI_API_KEY_8"),
-            os.getenv("GEMINI_API_KEY_9"),
-            os.getenv("GEMINI_API_KEY_10"),
-        ]
-        
-        # Add legacy support for GEMINI_API_KEY if no numbered keys are set
+        # Load all keys from a single comma-separated env var
+        raw = os.getenv("GEMINI_API_KEYS", "")
+        self.api_keys = [k.strip() for k in raw.replace("\n", ",").split(",") if k.strip()]
+
+        # Legacy support for GEMINI_API_KEY if GEMINI_API_KEYS is not set
         legacy_key = os.getenv("GEMINI_API_KEY")
-        if legacy_key and not any(self.api_keys):
+        if legacy_key and not self.api_keys:
             self.api_keys = [legacy_key]
-            print("🔑 [GEMINI SERVICE] Using legacy GEMINI_API_KEY")
-        
-        # Filter out None values and ensure we have at least one key
-        self.api_keys = [key for key in self.api_keys if key]
-        
+            print(" [GEMINI SERVICE] Using legacy GEMINI_API_KEY")
+
         if not self.api_keys:
-            raise ValueError("At least one GEMINI_API_KEY environment variable is required. Please set GEMINI_API_KEY_1, GEMINI_API_KEY_2, or GEMINI_API_KEY_3 in your .env file.")
-        
-        # Track current API key index and usage
+            raise ValueError(
+                "At least one Gemini API key is required. "
+                "Set GEMINI_API_KEYS=key1,key2,... (or legacy GEMINI_API_KEY) in your .env file."
+            )
+
         self.model = "gemini-2.5-flash"
         self.base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
 
-
-        
-        print(f"🔑 [GEMINI SERVICE] Initialized with {len(self.api_keys)} API key(s)")
-        # print(f"🔑 [GEMINI SERVICE] Using API key #{self.current_key_index + 1}")
+        print(f" [GEMINI SERVICE] Initialized with {len(self.api_keys)} API key(s)")
     
-    async def seed_gemini_keys(self,redis):
-        keys = [
-            os.getenv("GEMINI_API_KEY_1"),
-            os.getenv("GEMINI_API_KEY_2"),
-            os.getenv("GEMINI_API_KEY_3"),
-            os.getenv("GEMINI_API_KEY_4"),
-            os.getenv("GEMINI_API_KEY_5"),
-            os.getenv("GEMINI_API_KEY_6"),
-            os.getenv("GEMINI_API_KEY_7"),
-            os.getenv("GEMINI_API_KEY_8"),
-            os.getenv("GEMINI_API_KEY_9"),
-            os.getenv("GEMINI_API_KEY_10"),
-        ]
-
-        keys = [k for k in keys if k]
+    async def seed_gemini_keys(self, redis):
+        keys = self.api_keys
 
         for idx, api_key in enumerate(keys, start=1):
             key_id = f"key{idx}"
             redis_key = f"gemini:key:{key_id}"
 
             exists = await redis.exists(redis_key)
+
             if exists:
-                continue
-
-            await redis.hset(
-                redis_key,
-                mapping={
-                    "api_key": api_key,
-                    "in_use": 0,
+                # Clear stale runtime state, preserve daily count
+                await redis.hset(redis_key, mapping={
                     "cooldown_until": 0,
-                    "successful_hits": 0,
-                    "last_used": 0,
-                    "user":""
+                    "rpm_count": 0,
+                    "rpm_window": 0,
+                })
+            else:
+                await redis.hset(redis_key, mapping={
+                    "api_key": api_key,
+                    "cooldown_until": 0,
+                    "rpm_count": 0,
+                    "rpm_window": 0,
+                    "rpd_count": 0,
+                    "rpd_window": 0,
+                })
+                await redis.sadd("gemini:keys", key_id)
 
-                }
-            )
-
-            await redis.sadd("gemini:keys", key_id)
-
-        print(f"✅ Seeded {len(keys)} Gemini c keys into Redis")
+        print(f"✅ Seeded {len(keys)} Gemini keys into Redis")
            
         
-    async def _get_available_api_key(self, user: str = None) -> tuple[str, str]:
+    async def _get_available_api_key(self) -> tuple[str, str]:
         now = int(time.time())
-        candidates = []
 
-        # First: check if user already has a key assigned
-        for raw_id in await redis.smembers("gemini:keys"):
-            key_id = raw_id
+        for key_id in await redis.smembers("gemini:keys"):
             redis_key = f"gemini:key:{key_id}"
             data = await redis.hgetall(redis_key)
 
             if not data:
-                continue
-
-            # If this key belongs to this user
-            if data.get("user") == user:
-                hits = int(data.get("successful_hits", 0))
-
-                # If user hasn't exhausted 5 hits → reuse this key
-                if hits <= 5:
-                    await redis.hset(redis_key, "in_use", 1)
-                    return key_id, data["api_key"]
-
-                # If exhausted → unassign user
-                await redis.hset(redis_key, mapping={
-                    "user": "",
-                    "successful_hits": 0,
-                    "cooldown_until": int(time.time()) + 60,
-
-                })
-
-        # Second: find a free key
-        for raw_id in await redis.smembers("gemini:keys"):
-            key_id = raw_id  # Already a string since decode_responses=True
-            redis_key = f"gemini:key:{key_id}"
-
-            data = await redis.hgetall(redis_key)
-            if not data:
-                continue
-            if int(data.get("in_use", 0)) == 1:
                 continue
             if int(data.get("cooldown_until", 0)) > now:
                 continue
-            
-            hits = int(data.get("successful_hits", 0))
-            last_used = int(data.get("last_used", 0))
-            candidates.append((hits, last_used, key_id, data["api_key"]))
 
-        if not candidates:
-            raise RuntimeError("No available Gemini API keys")
-            # least hits, then least recently used
-        candidates.sort(key=lambda x: (x[0], x[1]))
-        print(f"Candidates: {candidates}")
+            # Roll RPM window if older than 60s
+            if now - int(data.get("rpm_window", 0)) >= 60:
+                await redis.hset(redis_key, mapping={"rpm_count": 0, "rpm_window": now})
 
-        _, _, key_id, api_key = candidates[0]
+            # Roll RPD window if older than 86400s
+            if now - int(data.get("rpd_window", 0)) >= 86400:
+                await redis.hset(redis_key, mapping={"rpd_count": 0, "rpd_window": now})
 
-        await redis.hset(
-            f"gemini:key:{key_id}",
-            mapping={
-                "in_use": 1,
-                "last_used": now,
-            },
-        )
-        return key_id, api_key  # Already a string since decode_responses=True
+            # Re-fetch after potential resets
+            data = await redis.hgetall(redis_key)
 
+            if int(data.get("rpd_count", 0)) >= RPD_LIMIT:
+                continue
 
-    async def _release_key(self, key_id: str):
-        await redis.hset(f"gemini:key:{key_id}", "in_use", 0)
-        
-    async def _set_success_hit(self, key_id: str, user: str):
-        await redis.hincrby(f"gemini:key:{key_id}", "successful_hits", 1)
-        await redis.hset(
-        f"gemini:key:{key_id}",
-        mapping={
-        "last_used": int(time.time()),
-        "user" : user
-        }                   
-        )    
+            # Atomically claim RPM slot
+            new_rpm = await redis.hincrby(redis_key, "rpm_count", 1)
+            if new_rpm > RPM_LIMIT:
+                await redis.hincrby(redis_key, "rpm_count", -1)
+                continue
+
+            # Atomically claim RPD slot
+            new_rpd = await redis.hincrby(redis_key, "rpd_count", 1)
+            if new_rpd > RPD_LIMIT:
+                await redis.hincrby(redis_key, "rpm_count", -1)
+                await redis.hincrby(redis_key, "rpd_count", -1)
+                continue
+
+            return key_id, data["api_key"]
+
+        raise RuntimeError("All Gemini API keys are at capacity or exhausted for today")
+
+    async def _handle_429(self, key_id: str, response=None):
+        now = int(time.time())
+        is_daily_exhausted = False
+
+        if response is not None:
+            try:
+                error_message = response.json().get("error", {}).get("message", "").lower()
+                daily_indicators = ["daily", "quota", "billing", "monthly"]
+                is_daily_exhausted = any(i in error_message for i in daily_indicators)
+            except Exception:
+                pass
+
+        await redis.hincrby(f"gemini:key:{key_id}", "rpm_count", -1)
+        await redis.hincrby(f"gemini:key:{key_id}", "rpd_count", -1)
+
+        if is_daily_exhausted:
+            await redis.hset(f"gemini:key:{key_id}", "rpd_count", RPD_LIMIT)
+        else:
+            await redis.hset(f"gemini:key:{key_id}", mapping={
+                "cooldown_until": now + 60,
+                "rpm_count": 0,
+                "rpm_window": now,
+            })
+
+    async def _handle_503(self, key_id: str):
+        now = int(time.time())
+        await redis.hincrby(f"gemini:key:{key_id}", "rpm_count", -1)
+        await redis.hincrby(f"gemini:key:{key_id}", "rpd_count", -1)
+        await redis.hset(f"gemini:key:{key_id}", "cooldown_until", now + 30)
 
     def _is_rate_limit_error(self, response):
         """Check if the response indicates a rate limit error"""
@@ -187,12 +159,11 @@ class GeminiService:
             return False
  
         
-    async def _make_api_request(self, data, max_retries=3,user: str = None):
-        print("USER VALUE:", user, type(user))
+    async def _make_api_request(self, data, max_retries=3, user: str = None):
         last_error = None
 
         for attempt in range(max_retries):
-            key_id, api_key = await self._get_available_api_key(user=user)
+            key_id, api_key = await self._get_available_api_key()
 
             headers = {
                 "Content-Type": "application/json",
@@ -210,37 +181,24 @@ class GeminiService:
                 )
 
                 if response.status_code == 200:
-                    await redis.hincrby(
-                    f"gemini:key:{key_id}", "successful_hits", 1)
-                    print("USER VALUE:", user, type(user))
-                    await redis.hset(
-                    f"gemini:key:{key_id}",
-                    mapping={
-                    "last_used": int(time.time()),
-                    "user" : user
-                    }                   
-                    )
                     return response, None, key_id
 
                 if self._is_rate_limit_error(response):
                     print(f"⚠️ Rate limit hit on {key_id}")
-                    await redis.hset(
-                        f"gemini:key:{key_id}",
-                        mapping={
-                            "last_used": int(time.time()),
-                            "cooldown_until": int(time.time()) + 60,
-                        }
-                    )
+                    await self._handle_429(key_id, response)
                     last_error = "Rate limited"
+                    continue
+
+                if response.status_code == 503:
+                    print(f"⚠️ Service unavailable on {key_id}")
+                    await self._handle_503(key_id)
+                    last_error = "Service unavailable"
                     continue
 
                 return None, f"API error {response.status_code}: {response.text}", key_id
 
             except requests.RequestException as e:
                 last_error = str(e)
-
-            finally:
-                await self._release_key(key_id)
 
         return None, f"Retries exhausted: {last_error}", None
 

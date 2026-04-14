@@ -755,7 +755,8 @@ async def llm_field_mapping(
 
     try:
         from services.gemini_token_service import gemini_token_service
-        Redis_Key_Meta,Redis_Key =  await gemini_token_service._get_available_api_key(user)
+        from google.api_core import exceptions as google_exceptions
+        Redis_Key_Meta, Redis_Key = await gemini_token_service._get_available_api_key()
         if Redis_Key:
             try:
                 genai.configure(api_key=Redis_Key)
@@ -765,6 +766,7 @@ async def llm_field_mapping(
                 model = None
                 logger.error(f"❌ Failed to configure Gemini: {e}")
         elif GEMINI_KEY:
+            Redis_Key_Meta = None
             try:
                 genai.configure(api_key=GEMINI_KEY)
                 model = genai.GenerativeModel(GEMINI_MODEL_NAME)
@@ -775,18 +777,25 @@ async def llm_field_mapping(
                 logger.warning("⚠️ GEMINI_API_KEY not set — LLM calls will use hybrid fallback")
         else:
             logger.warning("⚠️ No Gemini key available — using hybrid fallback")
-            return _fallback_to_hybrid(host_fields, target_fields)    
+            return _fallback_to_hybrid(host_fields, target_fields)
 
-        text = run_gemini_with_timeout(model,prompt, timeout_seconds=llm_timeout)
-        
+        try:
+            text = run_gemini_with_timeout(model, prompt, timeout_seconds=llm_timeout)
+        except google_exceptions.ResourceExhausted as e:
+            if Redis_Key_Meta:
+                await gemini_token_service._handle_429(Redis_Key_Meta)
+            raise HTTPException(status_code=429, detail="Too many requests. Please try again in a few minutes.")
+        except google_exceptions.ServiceUnavailable as e:
+            if Redis_Key_Meta:
+                await gemini_token_service._handle_503(Redis_Key_Meta)
+            raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
+
         logger.info(f"🔍 RAW GEMINI RESPONSE (first 500 chars): {text[:500]}")
         if not text:
             raise ValueError("Empty response from Gemini")
-        
+
         # Remove markdown code blocks
         text = text.replace("```json", "").replace("```", "").strip()
-        await gemini_token_service._release_key(Redis_Key_Meta)
-        await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
         
         # Find JSON array
         match = re.search(r"(\[[\s\S]*\])", text)

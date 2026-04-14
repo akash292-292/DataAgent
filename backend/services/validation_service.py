@@ -8,6 +8,8 @@ import json
 import logging
 import pandas as pd
 import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
+from fastapi import HTTPException
 from config.settings import GEMINI_API_KEY, GEMINI_MODEL_NAME
 from utils.file_utils import normalize_value_for_rule
 
@@ -177,7 +179,7 @@ User edits:
 
     try:
         from services.gemini_token_service import gemini_token_service
-        Redis_Key_Meta,Redis_Key =  await gemini_token_service._get_available_api_key(user)
+        Redis_Key_Meta, Redis_Key = await gemini_token_service._get_available_api_key()
         if Redis_Key:
             try:
                 genai.configure(api_key=Redis_Key)
@@ -187,16 +189,23 @@ User edits:
                 model = None
                 logger.error(f"❌ Failed to configure Gemini: {e}")
         else:
+            Redis_Key_Meta = None
             model = None
             logger.warning("⚠️ GEMINI_API_KEY not set — LLM calls will use hybrid fallback")
-        # model = genai.GenerativeModel("gemini-2.5-flash")
         logger.info(f"✅ Gemini model Sending Propmt with Redis Key: gemini-2.5-flash")
-        response =  model.generate_content(prompt)
+        try:
+            response = model.generate_content(prompt)
+        except google_exceptions.ResourceExhausted:
+            if Redis_Key_Meta:
+                await gemini_token_service._handle_429(Redis_Key_Meta)
+            raise HTTPException(status_code=429, detail="Too many requests. Please try again in a few minutes.")
+        except google_exceptions.ServiceUnavailable:
+            if Redis_Key_Meta:
+                await gemini_token_service._handle_503(Redis_Key_Meta)
+            raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
         logger.info(f"✅ Response received model with Redis Key: gemini-2.5-flash")
         text = response.text.strip()
         logger.info(f"✅ Gemini response with Redis Key: {Redis_Key} and user: {user}")
-        await gemini_token_service._release_key(Redis_Key_Meta)
-        await gemini_token_service._set_success_hit(Redis_Key_Meta, user)
 
         # Extract JSON content
         match = re.search(r"\[[\s\S]*\]", text)
