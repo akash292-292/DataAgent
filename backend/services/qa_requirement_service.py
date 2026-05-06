@@ -388,6 +388,8 @@ async def analyze_requirements(document_text: str, user_prompt: Optional[str] = 
         if Redis_Key_Meta:
             await gemini_token_service._handle_503(Redis_Key_Meta)
         raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
+    if Redis_Key_Meta:
+        await gemini_token_service.mark_key_success(Redis_Key_Meta)
     logger.info("Requirement analysis complete: %d chars in response", len(response.text))
     return {"model": MODEL_NAME, "analysis": response.text}
 
@@ -426,6 +428,8 @@ async def analyze_requirements_from_bytes(
                 if Redis_Key_Meta:
                     await gemini_token_service._handle_503(Redis_Key_Meta)
                 raise
+            if Redis_Key_Meta:
+                await gemini_token_service.mark_key_success(Redis_Key_Meta)
             logger.info("PDF analysis complete: %d chars in response", len(response.text))
         finally:
             try:
@@ -451,6 +455,8 @@ async def analyze_requirements_from_bytes(
             if Redis_Key_Meta:
                 await gemini_token_service._handle_503(Redis_Key_Meta)
             raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
+        if Redis_Key_Meta:
+            await gemini_token_service.mark_key_success(Redis_Key_Meta)
         logger.info("DOCX analysis complete: %d chars in response", len(response.text))
 
     elif ext == "csv":
@@ -468,6 +474,8 @@ async def analyze_requirements_from_bytes(
                 if Redis_Key_Meta:
                     await gemini_token_service._handle_503(Redis_Key_Meta)
                 raise
+            if Redis_Key_Meta:
+                await gemini_token_service.mark_key_success(Redis_Key_Meta)
             logger.info("CSV analysis complete: %d chars in response", len(response.text))
         finally:
             try:

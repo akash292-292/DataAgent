@@ -1,6 +1,7 @@
 import os
 import requests
 import json
+import random
 from typing import List, Dict, Any
 from core.redis import redis
 import time
@@ -8,6 +9,10 @@ from fastapi.concurrency import run_in_threadpool
 
 RPM_LIMIT = 5
 RPD_LIMIT = 20
+BASE_429_BACKOFF_SECONDS = 30
+MAX_429_BACKOFF_SECONDS = 600
+BACKOFF_JITTER_SECONDS = 5
+SHORT_503_COOLDOWN_SECONDS = 30
 
 
 class GeminiService:
@@ -57,6 +62,10 @@ class GeminiService:
                     "rpm_window": 0,
                     "rpd_count": 0,
                     "rpd_window": 0,
+                    "consecutive_429": 0,
+                    "backoff_seconds": 0,
+                    "last_used_at": 0,
+                    "last_429_at": 0,
                 })
                 await redis.sadd("gemini:keys", key_id)
 
@@ -65,8 +74,11 @@ class GeminiService:
         
     async def _get_available_api_key(self) -> tuple[str, str]:
         now = int(time.time())
+        key_ids = list(await redis.smembers("gemini:keys"))
+        random.shuffle(key_ids)
+        candidates = []
 
-        for key_id in await redis.smembers("gemini:keys"):
+        for key_id in key_ids:
             redis_key = f"gemini:key:{key_id}"
             data = await redis.hgetall(redis_key)
 
@@ -89,6 +101,18 @@ class GeminiService:
             if int(data.get("rpd_count", 0)) >= RPD_LIMIT:
                 continue
 
+            candidates.append((key_id, data))
+
+        candidates.sort(
+            key=lambda item: (
+                int(item[1].get("consecutive_429", 0)),
+                int(item[1].get("last_used_at", 0)),
+            )
+        )
+
+        for key_id, data in candidates:
+            redis_key = f"gemini:key:{key_id}"
+
             # Atomically claim RPM slot
             new_rpm = await redis.hincrby(redis_key, "rpm_count", 1)
             if new_rpm > RPM_LIMIT:
@@ -102,13 +126,34 @@ class GeminiService:
                 await redis.hincrby(redis_key, "rpd_count", -1)
                 continue
 
+            await redis.hset(redis_key, mapping={"last_used_at": now})
             return key_id, data["api_key"]
 
         raise RuntimeError("All Gemini API keys are at capacity or exhausted for today")
 
+    def _get_retry_after_seconds(self, response) -> int | None:
+        if response is None:
+            return None
+        try:
+            retry_after = response.headers.get("Retry-After")
+            if not retry_after:
+                return None
+            return max(1, int(float(retry_after)))
+        except Exception:
+            return None
+
+    async def _rollback_claimed_counts(self, redis_key: str):
+        rpm = await redis.hincrby(redis_key, "rpm_count", -1)
+        rpd = await redis.hincrby(redis_key, "rpd_count", -1)
+        if rpm < 0:
+            await redis.hset(redis_key, "rpm_count", 0)
+        if rpd < 0:
+            await redis.hset(redis_key, "rpd_count", 0)
+
     async def _handle_429(self, key_id: str, response=None):
         now = int(time.time())
         is_daily_exhausted = False
+        redis_key = f"gemini:key:{key_id}"
 
         if response is not None:
             try:
@@ -118,23 +163,53 @@ class GeminiService:
             except Exception:
                 pass
 
-        await redis.hincrby(f"gemini:key:{key_id}", "rpm_count", -1)
-        await redis.hincrby(f"gemini:key:{key_id}", "rpd_count", -1)
+        await self._rollback_claimed_counts(redis_key)
 
         if is_daily_exhausted:
-            await redis.hset(f"gemini:key:{key_id}", "rpd_count", RPD_LIMIT)
+            await redis.hset(
+                redis_key,
+                mapping={
+                    "rpd_count": RPD_LIMIT,
+                    "cooldown_until": now + 86400,
+                    "last_429_at": now,
+                },
+            )
         else:
-            await redis.hset(f"gemini:key:{key_id}", mapping={
-                "cooldown_until": now + 60,
-                "rpm_count": 0,
-                "rpm_window": now,
-            })
+            data = await redis.hgetall(redis_key)
+            retry_after = self._get_retry_after_seconds(response)
+            if retry_after is None:
+                prev = int(data.get("backoff_seconds", 0))
+                retry_after = prev * 2 if prev > 0 else BASE_429_BACKOFF_SECONDS
+            retry_after = min(retry_after, MAX_429_BACKOFF_SECONDS)
+            retry_after += random.randint(0, BACKOFF_JITTER_SECONDS)
+            consecutive = int(data.get("consecutive_429", 0)) + 1
+            await redis.hset(
+                redis_key,
+                mapping={
+                    "cooldown_until": now + retry_after,
+                    "backoff_seconds": retry_after,
+                    "consecutive_429": consecutive,
+                    "last_429_at": now,
+                },
+            )
 
     async def _handle_503(self, key_id: str):
         now = int(time.time())
-        await redis.hincrby(f"gemini:key:{key_id}", "rpm_count", -1)
-        await redis.hincrby(f"gemini:key:{key_id}", "rpd_count", -1)
-        await redis.hset(f"gemini:key:{key_id}", "cooldown_until", now + 30)
+        redis_key = f"gemini:key:{key_id}"
+        await self._rollback_claimed_counts(redis_key)
+        cooldown = SHORT_503_COOLDOWN_SECONDS + random.randint(0, BACKOFF_JITTER_SECONDS)
+        await redis.hset(redis_key, "cooldown_until", now + cooldown)
+
+    async def mark_key_success(self, key_id: str):
+        now = int(time.time())
+        await redis.hset(
+            f"gemini:key:{key_id}",
+            mapping={
+                "consecutive_429": 0,
+                "backoff_seconds": 0,
+                "last_used_at": now,
+            },
+        )
 
     def _is_rate_limit_error(self, response):
         """Check if the response indicates a rate limit error"""
@@ -181,6 +256,7 @@ class GeminiService:
                 )
 
                 if response.status_code == 200:
+                    await self.mark_key_success(key_id)
                     return response, None, key_id
 
                 if self._is_rate_limit_error(response):

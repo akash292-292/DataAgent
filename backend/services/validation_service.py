@@ -203,6 +203,8 @@ User edits:
             if Redis_Key_Meta:
                 await gemini_token_service._handle_503(Redis_Key_Meta)
             raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
+        if Redis_Key_Meta:
+            await gemini_token_service.mark_key_success(Redis_Key_Meta)
         logger.info(f"✅ Response received model with Redis Key: gemini-2.5-flash")
         text = response.text.strip()
         logger.info(f"✅ Gemini response with Redis Key: {Redis_Key} and user: {user}")

@@ -2750,10 +2750,9 @@ const pickerCallback = useCallback((data, userEmail) => {
                     // Check if user is admin - check role and email
                     const userRole = user?.role || localStorage.getItem("role");
                     const ADMIN_EMAILS = [
-                      "shaik.sharuk@forsysinc.com",
-                      "archana.machanpally@forsysinc.com",
-                      "sowjanya.pilla@forsysinc.com",
-                      "nihal.yemula@forsysinc.com"
+                       "vandana.dandge@forsysinc.com",
+                       "archana.chandel@forsysinc.com",
+                       "nihal.yemula@forsysinc.com",
 
                       // Add more admin emails here as needed
                     ];

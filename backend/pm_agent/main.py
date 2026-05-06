@@ -3580,9 +3580,8 @@ async def delete_workspace(
         
         # Define admin emails
         ADMIN_EMAILS = [
-            "shaik.sharuk@forsysinc.com",
-            "archana.machanpally@forsysinc.com",
-            "sowjanya.pilla@forsysinc.com",
+            "vandana.dandge@forsysinc.com",
+            "archana.chandel@forsysinc.com",
             "nihal.yemula@forsysinc.com",
             # Add more admin emails here as needed
         ]

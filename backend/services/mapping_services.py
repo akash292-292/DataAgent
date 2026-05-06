@@ -789,6 +789,8 @@ async def llm_field_mapping(
             if Redis_Key_Meta:
                 await gemini_token_service._handle_503(Redis_Key_Meta)
             raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
+        if Redis_Key_Meta:
+            await gemini_token_service.mark_key_success(Redis_Key_Meta)
 
         logger.info(f"🔍 RAW GEMINI RESPONSE (first 500 chars): {text[:500]}")
         if not text:

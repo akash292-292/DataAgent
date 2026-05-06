@@ -280,6 +280,8 @@ async def generate_test_cases(document_content: str, focus_query: Optional[str] 
         if Redis_Key_Meta:
             await gemini_token_service._handle_503(Redis_Key_Meta)
         raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
+    if Redis_Key_Meta:
+        await gemini_token_service.mark_key_success(Redis_Key_Meta)
     logger.info("Model response received: %d chars", len(response.text))
     return _process_test_case_response(response.text)
 
@@ -318,6 +320,8 @@ async def generate_test_cases_from_bytes(
                 if Redis_Key_Meta:
                     await gemini_token_service._handle_503(Redis_Key_Meta)
                 raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
+            if Redis_Key_Meta:
+                await gemini_token_service.mark_key_success(Redis_Key_Meta)
             logger.info("PDF test case generation complete: %d chars in response", len(response.text))
         finally:
             try:
@@ -343,6 +347,8 @@ async def generate_test_cases_from_bytes(
             if Redis_Key_Meta:
                 await gemini_token_service._handle_503(Redis_Key_Meta)
             raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
+        if Redis_Key_Meta:
+            await gemini_token_service.mark_key_success(Redis_Key_Meta)
         logger.info("DOCX test case generation complete: %d chars in response", len(response.text))
 
     elif ext == "csv":
@@ -360,6 +366,8 @@ async def generate_test_cases_from_bytes(
                 if Redis_Key_Meta:
                     await gemini_token_service._handle_503(Redis_Key_Meta)
                 raise HTTPException(status_code=503, detail="Service unavailable. Please try again in a few minutes.")
+            if Redis_Key_Meta:
+                await gemini_token_service.mark_key_success(Redis_Key_Meta)
             logger.info("CSV test case generation complete: %d chars in response", len(response.text))
         finally:
             try:

@@ -364,17 +364,17 @@ def start_scheduler():
         replace_existing=True,
         misfire_grace_time=3600,
     )
-    # New: incomplete project reminder — every hour
+    # New: incomplete project reminder — every Monday at 01:00
     scheduler.add_job(
         check_incomplete_projects,
-        trigger=CronTrigger(minute=0),   # fires at :00 of every hour
+        trigger=CronTrigger(day_of_week="mon", hour=1, minute=0),
         id="governance_incomplete_reminder",
         name="Governance Incomplete Project Reminder",
         replace_existing=True,
         misfire_grace_time=1800,
     )
     scheduler.start()
-    logger.info("Governance scheduler started — overdue check: Mon 09:00 | incomplete reminder: every hour.")
+    logger.info("Governance scheduler started — overdue check: Mon 09:00 | incomplete reminder: Mon 01:00.")
 
 
 def stop_scheduler():
